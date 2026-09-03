@@ -1,0 +1,17 @@
+# Node
+node_modules/
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Benchmark output
+results/*.csv
+results/*.png
+
+# OS cruft
+.DS_Store
+Thumbs.db
