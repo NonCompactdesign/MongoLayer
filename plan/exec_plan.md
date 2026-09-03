@@ -25,9 +25,9 @@ Check off phases as you go (`- [x]`) so the team can see progress at a glance.
 **Steps:**
 1. `git init` in `MongoLayer/` if not already a repo; create `.gitignore` (Python: `__pycache__/`, `*.pyc`, `.venv/`, `results/*.csv`, `results/*.png`, `.env`).
 2. Create a virtual environment: `python -m venv .venv`, activate it.
-3. Create `requirements.txt`: `pymongo`, `pytest`, `pandas`, `matplotlib`. Add `locust` only if you decide to use it over the custom asyncio generator (Phase 8 default assumes custom).
+3. Create `requirements.txt`: `pymongo`, `pytest`, `pandas`, `matplotlib`, `locust` (used in Phase 8 for the workload generator — chosen over a hand-rolled asyncio generator to get rate control, ramping, and percentile stats for free).
 4. `pip install -r requirements.txt`.
-5. Create the skeleton folders/files exactly as in `PROJECT.md` §7: `adaptive_layer/__init__.py`, `benchmark/__init__.py`, empty placeholder modules (`client.py`, `monitor.py`, `decision.py`, `feedback.py`, `workloads.py`, `run_benchmark.py`, `analyze_results.py`), `demo_app.py`, `results/` (empty, gitignored contents).
+5. Create the skeleton folders/files: `adaptive_layer/__init__.py`, empty placeholder modules `adaptive_layer/client.py`, `adaptive_layer/monitor.py`, `adaptive_layer/decision.py`, `adaptive_layer/feedback.py`; `benchmark/__init__.py`, empty placeholder modules `benchmark/locustfile.py`, `benchmark/run_benchmark.py`, `benchmark/analyze_results.py`; `demo_app.py`; `results/` (empty, gitignored contents).
 6. First commit: "Project skeleton."
 
 **Definition of Done:** `python -c "import pymongo, pandas, matplotlib, pytest"` runs with no error; `git log` shows an initial commit; a teammate can clone the repo and get the same environment from `requirements.txt`.
@@ -152,33 +152,34 @@ Check off phases as you go (`- [x]`) so the team can see progress at a glance.
 
 ---
 
-## Phase 8 — Benchmark Workload Generator
+## Phase 8 — Benchmark Workload Generator (Locust)
 
-**Goal:** A configurable, reusable load generator: given a read/write ratio, ops/sec, and duration, it drives that exact workload.
+**Goal:** A configurable, reusable load generator: given a read/write ratio, ops/sec, and duration, it drives that exact workload against the `AdaptiveClient`.
 
-**Why:** You need the *same* workload generator to drive all three configurations (adaptive, static-fast, static-safe) for the comparison to be fair.
+**Why:** You need the *same* workload generator to drive all three configurations (adaptive, static-fast, static-safe) for the comparison to be fair. **Decision:** use `locust` instead of a hand-rolled `asyncio` generator — rate control, ramping, live percentile stats, and a web UI (handy for the DA-III demo) all come for free instead of being reimplemented and re-debugged from scratch.
 
 **Steps:**
-1. In `benchmark/workloads.py`, implement an `asyncio`-based generator that yields timed read/write events against a configurable key space, at a configurable rate.
-2. Define named presets matching `PROJECT.md` §5: `READ_HEAVY` (e.g. 95/5), `WRITE_HEAVY` (5/95), `MIXED_BURSTY` (oscillates between read-heavy and write-heavy within one run — this is the one that should make the adaptive layer visibly outperform either static baseline).
-3. Standalone sanity script: run the generator alone for 30s at a known ratio, count actual reads/writes produced, and assert they're within tolerance of the target ratio and rate.
+1. In `benchmark/locustfile.py`, define a `User` class wrapping `AdaptiveClient` as its "client" (Locust's HTTP assumption doesn't apply — MongoDB calls are reported manually via `environment.events.request.fire(request_type=..., name=..., response_time=..., response_length=0, exception=...)` so Locust's stats engine tracks them like any other request type).
+2. Define `@task(weight)` methods for `read` and `write` against a configurable key space; control the read:write ratio via task weights and pacing via a `wait_time` class (e.g. `constant_throughput`).
+3. Define named presets as separate `locustfile`s or CLI-parameterized weights: `READ_HEAVY` (e.g. 95/5), `WRITE_HEAVY` (5/95), `MIXED_BURSTY` (a `LoadTestShape` that oscillates target user count/weights between read-heavy and write-heavy within one run — this is the preset that should make the adaptive layer visibly outperform either static baseline).
+4. Standalone sanity run: `locust -f benchmark/locustfile.py --headless -u 10 -r 5 -t 30s` against a known ratio; confirm Locust's own request-count breakdown by type is within tolerance of the target ratio and rate.
 
-**Definition of Done:** The sanity script confirms the generator hits its configured rate and read/write mix within a reasonable tolerance (e.g. ±10%).
+**Definition of Done:** A headless Locust run hits its configured rate and read/write mix within a reasonable tolerance (e.g. ±10%), confirmed from Locust's own printed stats.
 
 ---
 
-## Phase 9 — Benchmark Runner + Latency/Throughput Metrics
+## Phase 9 — Benchmark Runner + Latency/Throughput Metrics (Locust)
 
 **Goal:** Orchestrate all three configurations × the workload presets, capturing per-op latency and throughput, and write raw results to CSV.
 
-**Why:** This is the actual "benchmark run" DA-II wants evidence of.
+**Why:** This is the actual "benchmark run" DA-II wants evidence of. Locust already computes p50/p95/p99-equivalent response-time percentiles per request type and can export them directly — no custom percentile math needed here.
 
 **Steps:**
-1. In `benchmark/run_benchmark.py`, for each config in `[static_fast (w=1/local), static_safe (w=majority/majority), adaptive]`, for each workload preset: freshly configure the client for that run, drive the Phase 8 generator against it, record per-operation latency with a timestamp, write raw rows to `results/<config>_<workload>.csv`.
-3. Add a `--quick` flag (short duration, e.g. 15s) for fast iteration while developing, versus a full-length run for real numbers later (Phase 11).
-4. Compute and print p50/p95/p99 latency and ops/sec at the end of each run as a sanity check.
+1. In `benchmark/run_benchmark.py`, for each config in `[static_fast (w=1/local), static_safe (w=majority/majority), adaptive]`, for each workload preset from Phase 8: reconfigure the client for that run, then invoke Locust headlessly (`locust -f benchmark/locustfile.py --headless --csv results/<config>_<workload> -u N -r N -t Xs`) so Locust itself writes the `_stats.csv` / `_stats_history.csv` files.
+2. Add a `--quick` flag (short duration, e.g. 15s) for fast iteration while developing, versus a full-length run for real numbers later (Phase 11).
+3. After each run, read Locust's own `_stats.csv` and print p50/p95/p99 latency and ops/sec as a sanity check (Locust's stats object exposes `get_response_time_percentile()` directly if you want this in-process instead of shelling out).
 
-**Definition of Done:** `python benchmark/run_benchmark.py --quick` produces correctly-formatted CSVs in `results/` for every (config × workload) combination, with sane-looking percentile numbers printed to console.
+**Definition of Done:** `python benchmark/run_benchmark.py --quick` produces Locust's CSV output in `results/` for every (config × workload) combination, with sane-looking percentile numbers printed to console.
 
 ---
 

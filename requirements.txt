@@ -1,0 +1,5 @@
+pymongo
+pytest
+pandas
+matplotlib
+locust
