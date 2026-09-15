@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Adaptive Consistency Layer — Live Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Adaptive Consistency Layer <span class="subtitle">— live dashboard</span></h1>
+  <div id="conn-indicator" class="conn-indicator conn-unknown">connecting…</div>
+</header>
+
+<section id="controls" class="card">
+  <h2>Traffic Controls</h2>
+  <div class="controls-row">
+    <div class="control-group">
+      <label for="ratio-slider">Read <span id="ratio-read-pct">50%</span> / Write <span id="ratio-write-pct">50%</span></label>
+      <input type="range" id="ratio-slider" min="0" max="100" value="50">
+    </div>
+    <div class="control-group">
+      <label for="rate-slider">Rate: <span id="rate-value">5.0</span> ops/sec</label>
+      <input type="range" id="rate-slider" min="1" max="50" step="1" value="5">
+    </div>
+    <div class="control-group buttons">
+      <button id="btn-start" class="btn btn-start">Start Traffic</button>
+      <button id="btn-stop" class="btn btn-stop">Stop Traffic</button>
+      <button id="btn-reset" class="btn btn-reset" title="Zeroes the container op counters and traffic count. Does not touch active settings or the monitor's real observed pattern.">Reset Stats</button>
+    </div>
+  </div>
+  <div class="controls-row presets">
+    <span class="presets-label">Presets:</span>
+    <button class="btn btn-preset" data-ratio="5" data-rate="10">Read-Heavy</button>
+    <button class="btn btn-preset" data-ratio="95" data-rate="15">Write-Heavy</button>
+    <button class="btn btn-preset" data-ratio="50" data-rate="8">Balanced</button>
+  </div>
+  <div id="traffic-status" class="traffic-status">Traffic: <span id="traffic-state">stopped</span> · <span id="traffic-count">0</span> ops sent</div>
+</section>
+
+<section class="grid">
+
+  <div class="card" id="settings-card">
+    <h2>Active Consistency Settings</h2>
+    <div class="settings-grid">
+      <div class="setting-box" id="setting-write-concern">
+        <div class="setting-label">Write Concern</div>
+        <div class="setting-value">—</div>
+      </div>
+      <div class="setting-box" id="setting-read-concern">
+        <div class="setting-label">Read Concern</div>
+        <div class="setting-value">—</div>
+      </div>
+      <div class="setting-box" id="setting-read-preference">
+        <div class="setting-label">Read Preference</div>
+        <div class="setting-value">—</div>
+      </div>
+    </div>
+    <div class="settings-mode" id="settings-mode">—</div>
+  </div>
+
+  <div class="card" id="stats-card">
+    <h2>Access Pattern Monitor</h2>
+    <div class="stat-row"><span>Reads (window)</span><b id="stat-reads">0</b></div>
+    <div class="stat-row"><span>Writes (window)</span><b id="stat-writes">0</b></div>
+    <div class="stat-row">
+      <span>Write frequency</span><b id="stat-write-freq">0.0/s</b>
+    </div>
+    <div class="threshold-bar-wrap">
+      <div class="threshold-bar"><div id="write-freq-bar" class="threshold-fill fill-write"></div></div>
+      <div class="threshold-labels"><span>0</span><span id="high-write-label">HIGH_WRITE_THRESHOLD</span></div>
+    </div>
+    <div class="stat-row">
+      <span>Read:write ratio</span><b id="stat-ratio">0.0</b>
+    </div>
+    <div class="threshold-bar-wrap">
+      <div class="threshold-bar"><div id="ratio-bar" class="threshold-fill fill-ratio"></div></div>
+      <div class="threshold-labels"><span>0</span><span id="read-heavy-label">READ_HEAVY_RATIO_THRESHOLD</span></div>
+    </div>
+  </div>
+
+</section>
+
+<section class="card" id="nodes-card">
+  <h2>Replica Set — Live Container Status</h2>
+  <div class="nodes-grid" id="nodes-grid">
+    <!-- populated by JS -->
+  </div>
+</section>
+
+<section class="card" id="feed-card">
+  <h2>Live Operation Feed</h2>
+  <div id="feed-list" class="feed-list"></div>
+</section>
+
+<script src="app.js"></script>
+</body>
+</html>

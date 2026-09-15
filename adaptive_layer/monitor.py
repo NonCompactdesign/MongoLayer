@@ -47,6 +47,15 @@ class AccessPatternMonitor:
         # collection -> deque[(timestamp, op_type)], oldest first
         self._events = collections.defaultdict(collections.deque)
 
+    def known_collections(self):
+        """Every collection name record() has ever been called for. Used by
+        the Feedback Loop (Phase 6) to know which collections to evaluate on
+        each tick, without needing the caller to track that list separately.
+        Note a collection stays "known" even after all its events have aged
+        out of the window - get_stats() for it then correctly returns
+        NEUTRAL_STATS, which is exactly what we want the Feedback Loop to see."""
+        return list(self._events.keys())
+
     def record(self, collection, op_type, timestamp):
         if op_type not in _VALID_OP_TYPES:
             raise ValueError(f"op_type must be one of {_VALID_OP_TYPES}, got {op_type!r}")

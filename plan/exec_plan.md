@@ -161,10 +161,10 @@ Check off phases as you go (`- [x]`) so the team can see progress at a glance.
 **Steps:**
 1. In `benchmark/locustfile.py`, define a `User` class wrapping `AdaptiveClient` as its "client" (Locust's HTTP assumption doesn't apply — MongoDB calls are reported manually via `environment.events.request.fire(request_type=..., name=..., response_time=..., response_length=0, exception=...)` so Locust's stats engine tracks them like any other request type).
 2. Define `@task(weight)` methods for `read` and `write` against a configurable key space; control the read:write ratio via task weights and pacing via a `wait_time` class (e.g. `constant_throughput`).
-3. Define named presets as separate `locustfile`s or CLI-parameterized weights: `READ_HEAVY` (e.g. 95/5), `WRITE_HEAVY` (5/95), `MIXED_BURSTY` (a `LoadTestShape` that oscillates target user count/weights between read-heavy and write-heavy within one run — this is the preset that should make the adaptive layer visibly outperform either static baseline).
+3. Define named presets via a `WORKLOAD_PRESET` env var: `READ_HEAVY` (5% writes), `WRITE_HEAVY` (95% writes), `MIXED_BURSTY` (oscillates between the two on a fixed wall-clock period — implemented as a simple time-modulo probability function, not a Locust `LoadTestShape`: `LoadTestShape` controls simulated user *count* over time, not the read/write *mix*, so it's the wrong tool for demonstrating a pattern shift within a steady user count). This is the preset that should make the adaptive layer visibly outperform either static baseline.
 4. Standalone sanity run: `locust -f benchmark/locustfile.py --headless -u 10 -r 5 -t 30s` against a known ratio; confirm Locust's own request-count breakdown by type is within tolerance of the target ratio and rate.
 
-**Definition of Done:** A headless Locust run hits its configured rate and read/write mix within a reasonable tolerance (e.g. ±10%), confirmed from Locust's own printed stats.
+**Definition of Done:** A headless Locust run hits its configured rate and read/write mix within a reasonable tolerance (e.g. ±10%), confirmed from Locust's own printed stats. **Status: done (2026-09-10)** — `READ_HEAVY` sanity run: 29/705 writes (4.11%) vs. a 5% target; default `MIXED_BURSTY` run: 1417 ops, 0 failures, ~48 req/s vs. a ~50 req/s target. See `benchmark/locustfile.py` and the project vault's Phase 8 note for the shared-client architecture and env-var configuration this actually uses.
 
 ---
 

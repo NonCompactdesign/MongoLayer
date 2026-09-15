@@ -1,0 +1,141 @@
+
+========================================================================
+ADAPTIVE CONSISTENCY LAYER - LIVE DEMO
+========================================================================
+Collection: demo.live_demo
+Monitor window=8s | Feedback interval=2s | cooldown=3s
+Starting settings for any never-configured collection: MODERATE_SETTINGS (the safe default).
+[AdaptiveClient] write collection='live_demo' latency=22.17ms ts=1789033101.165
+
+========================================================================
+PHASE A: READ-HEAVY TRAFFIC (expect -> FAST_SETTINGS)
+========================================================================
+Issuing 20 reads, no writes...
+[AdaptiveClient] read  collection='live_demo' latency=1.65ms ts=1789033101.167
+[AdaptiveClient] read  collection='live_demo' latency=2.26ms ts=1789033101.270
+[AdaptiveClient] read  collection='live_demo' latency=1.85ms ts=1789033101.372
+[AdaptiveClient] read  collection='live_demo' latency=5.56ms ts=1789033101.478
+[AdaptiveClient] read  collection='live_demo' latency=7.96ms ts=1789033101.587
+[AdaptiveClient] read  collection='live_demo' latency=2.85ms ts=1789033101.690
+[AdaptiveClient] read  collection='live_demo' latency=1.93ms ts=1789033101.792
+[AdaptiveClient] read  collection='live_demo' latency=1.67ms ts=1789033101.894
+[AdaptiveClient] read  collection='live_demo' latency=2.44ms ts=1789033101.997
+[AdaptiveClient] read  collection='live_demo' latency=3.27ms ts=1789033102.101
+[AdaptiveClient] read  collection='live_demo' latency=2.61ms ts=1789033102.204
+[AdaptiveClient] read  collection='live_demo' latency=2.01ms ts=1789033102.306
+[AdaptiveClient] read  collection='live_demo' latency=2.00ms ts=1789033102.409
+[AdaptiveClient] read  collection='live_demo' latency=1.75ms ts=1789033102.510
+[AdaptiveClient] read  collection='live_demo' latency=1.94ms ts=1789033102.613
+[AdaptiveClient] read  collection='live_demo' latency=2.17ms ts=1789033102.715
+[AdaptiveClient] read  collection='live_demo' latency=2.21ms ts=1789033102.818
+[AdaptiveClient] read  collection='live_demo' latency=1.90ms ts=1789033102.920
+[AdaptiveClient] read  collection='live_demo' latency=2.32ms ts=1789033103.023
+[AdaptiveClient] read  collection='live_demo' latency=2.01ms ts=1789033103.126
+  (waiting 3s for the Feedback Loop to react...)
+
+After Phase A (read-heavy):
+  stats: reads=20 writes=1 read_write_ratio=20.00 write_freq=0.12/s
+  ACTIVE SETTINGS -> write_concern=1 read_concern='local' read_preference='nearest'  (MATCHES expectation)
+
+--- letting the 8s monitoring window clear (10s pause) ---
+
+========================================================================
+PHASE B: WRITE BURST (expect -> SAFE_SETTINGS)
+========================================================================
+Issuing 60 writes as fast as possible (needs > 40 writes within the 8s window to clear the HIGH_WRITE_THRESHOLD of 5.0/s with margin)...
+[AdaptiveClient] write collection='live_demo' latency=3.00ms ts=1789033116.230
+[AdaptiveClient] write collection='live_demo' latency=2.30ms ts=1789033116.233
+[AdaptiveClient] write collection='live_demo' latency=2.38ms ts=1789033116.235
+[AdaptiveClient] write collection='live_demo' latency=1.63ms ts=1789033116.237
+[AdaptiveClient] write collection='live_demo' latency=1.49ms ts=1789033116.238
+[AdaptiveClient] write collection='live_demo' latency=1.79ms ts=1789033116.240
+[AdaptiveClient] write collection='live_demo' latency=2.13ms ts=1789033116.242
+[AdaptiveClient] write collection='live_demo' latency=1.84ms ts=1789033116.244
+[AdaptiveClient] write collection='live_demo' latency=1.57ms ts=1789033116.246
+[AdaptiveClient] write collection='live_demo' latency=1.65ms ts=1789033116.248
+[AdaptiveClient] write collection='live_demo' latency=1.65ms ts=1789033116.249
+[AdaptiveClient] write collection='live_demo' latency=1.47ms ts=1789033116.251
+[AdaptiveClient] write collection='live_demo' latency=1.55ms ts=1789033116.252
+[AdaptiveClient] write collection='live_demo' latency=2.06ms ts=1789033116.255
+[AdaptiveClient] write collection='live_demo' latency=1.65ms ts=1789033116.256
+[AdaptiveClient] write collection='live_demo' latency=1.70ms ts=1789033116.258
+[AdaptiveClient] write collection='live_demo' latency=1.51ms ts=1789033116.260
+[AdaptiveClient] write collection='live_demo' latency=1.33ms ts=1789033116.261
+[AdaptiveClient] write collection='live_demo' latency=1.75ms ts=1789033116.263
+[AdaptiveClient] write collection='live_demo' latency=2.07ms ts=1789033116.265
+[AdaptiveClient] write collection='live_demo' latency=1.51ms ts=1789033116.267
+[AdaptiveClient] write collection='live_demo' latency=1.39ms ts=1789033116.268
+[AdaptiveClient] write collection='live_demo' latency=1.73ms ts=1789033116.270
+[AdaptiveClient] write collection='live_demo' latency=2.08ms ts=1789033116.272
+[AdaptiveClient] write collection='live_demo' latency=1.97ms ts=1789033116.274
+[AdaptiveClient] write collection='live_demo' latency=2.00ms ts=1789033116.276
+[AdaptiveClient] write collection='live_demo' latency=2.57ms ts=1789033116.279
+[AdaptiveClient] write collection='live_demo' latency=1.98ms ts=1789033116.281
+[AdaptiveClient] write collection='live_demo' latency=2.97ms ts=1789033116.284
+[AdaptiveClient] write collection='live_demo' latency=2.30ms ts=1789033116.286
+[AdaptiveClient] write collection='live_demo' latency=1.68ms ts=1789033116.288
+[AdaptiveClient] write collection='live_demo' latency=2.80ms ts=1789033116.291
+[AdaptiveClient] write collection='live_demo' latency=1.97ms ts=1789033116.293
+[AdaptiveClient] write collection='live_demo' latency=2.01ms ts=1789033116.295
+[AdaptiveClient] write collection='live_demo' latency=2.36ms ts=1789033116.298
+[AdaptiveClient] write collection='live_demo' latency=2.24ms ts=1789033116.300
+[AdaptiveClient] write collection='live_demo' latency=1.80ms ts=1789033116.302
+[AdaptiveClient] write collection='live_demo' latency=1.89ms ts=1789033116.304
+[AdaptiveClient] write collection='live_demo' latency=2.12ms ts=1789033116.306
+[AdaptiveClient] write collection='live_demo' latency=1.60ms ts=1789033116.308
+[AdaptiveClient] write collection='live_demo' latency=1.58ms ts=1789033116.309
+[AdaptiveClient] write collection='live_demo' latency=1.48ms ts=1789033116.311
+[AdaptiveClient] write collection='live_demo' latency=1.73ms ts=1789033116.312
+[AdaptiveClient] write collection='live_demo' latency=1.93ms ts=1789033116.314
+[AdaptiveClient] write collection='live_demo' latency=1.46ms ts=1789033116.316
+[AdaptiveClient] write collection='live_demo' latency=1.65ms ts=1789033116.318
+[AdaptiveClient] write collection='live_demo' latency=1.76ms ts=1789033116.319
+[AdaptiveClient] write collection='live_demo' latency=1.95ms ts=1789033116.321
+[AdaptiveClient] write collection='live_demo' latency=1.54ms ts=1789033116.323
+[AdaptiveClient] write collection='live_demo' latency=1.42ms ts=1789033116.324
+[AdaptiveClient] write collection='live_demo' latency=1.93ms ts=1789033116.326
+[AdaptiveClient] write collection='live_demo' latency=1.68ms ts=1789033116.328
+[AdaptiveClient] write collection='live_demo' latency=1.78ms ts=1789033116.330
+[AdaptiveClient] write collection='live_demo' latency=1.96ms ts=1789033116.332
+[AdaptiveClient] write collection='live_demo' latency=1.78ms ts=1789033116.334
+[AdaptiveClient] write collection='live_demo' latency=1.56ms ts=1789033116.335
+[AdaptiveClient] write collection='live_demo' latency=1.41ms ts=1789033116.337
+[AdaptiveClient] write collection='live_demo' latency=1.74ms ts=1789033116.339
+[AdaptiveClient] write collection='live_demo' latency=1.94ms ts=1789033116.341
+[AdaptiveClient] write collection='live_demo' latency=1.42ms ts=1789033116.342
+  (waiting 3s for the Feedback Loop to react...)
+
+After Phase B (write burst):
+  stats: reads=0 writes=60 read_write_ratio=0.00 write_freq=7.50/s
+  ACTIVE SETTINGS -> write_concern='majority' read_concern='majority' read_preference='primary'  (MATCHES expectation)
+
+--- letting the 8s monitoring window clear (10s pause) ---
+
+========================================================================
+PHASE C: MIXED / MODERATE TRAFFIC (expect -> MODERATE_SETTINGS)
+========================================================================
+Issuing an interleaved mix of reads and writes at a moderate pace...
+[AdaptiveClient] write collection='live_demo' latency=2.61ms ts=1789033129.346
+[AdaptiveClient] read  collection='live_demo' latency=2.21ms ts=1789033129.649
+[AdaptiveClient] read  collection='live_demo' latency=2.23ms ts=1789033129.952
+[AdaptiveClient] write collection='live_demo' latency=2.84ms ts=1789033130.255
+[AdaptiveClient] read  collection='live_demo' latency=1.78ms ts=1789033130.557
+[AdaptiveClient] read  collection='live_demo' latency=2.30ms ts=1789033130.860
+[AdaptiveClient] write collection='live_demo' latency=1.98ms ts=1789033131.162
+[AdaptiveClient] read  collection='live_demo' latency=2.15ms ts=1789033131.465
+[AdaptiveClient] read  collection='live_demo' latency=2.85ms ts=1789033131.768
+[AdaptiveClient] write collection='live_demo' latency=1.96ms ts=1789033132.071
+[AdaptiveClient] read  collection='live_demo' latency=2.21ms ts=1789033132.373
+[AdaptiveClient] read  collection='live_demo' latency=1.70ms ts=1789033132.675
+[AdaptiveClient] write collection='live_demo' latency=2.05ms ts=1789033132.978
+[AdaptiveClient] read  collection='live_demo' latency=2.63ms ts=1789033133.281
+[AdaptiveClient] read  collection='live_demo' latency=1.97ms ts=1789033133.583
+  (waiting 3s for the Feedback Loop to react...)
+
+After Phase C (mixed/moderate):
+  stats: reads=10 writes=5 read_write_ratio=2.00 write_freq=0.62/s
+  ACTIVE SETTINGS -> write_concern=1 read_concern='local' read_preference='primaryPreferred'  (MATCHES expectation)
+
+========================================================================
+DEMO COMPLETE - the settings above changed automatically, with no human touching them
+========================================================================

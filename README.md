@@ -6,6 +6,8 @@ NoSQL Databases (BCSE406L), VIT — DA team project.
 
 **Start here:** [`plan/exec_plan.md`](plan/exec_plan.md) — the full phase-by-phase build plan, from environment setup through the DA-III final report.
 
+**Running a live demo/showcase?** See [`docs/SHOWCASE.md`](docs/SHOWCASE.md) for the exact startup sequence, what to run, and troubleshooting.
+
 ## Quickstart
 
 ```bash
