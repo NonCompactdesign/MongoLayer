@@ -54,8 +54,8 @@ def test_feedback_loop_escalates_on_write_burst_then_relaxes_on_reads(stack):
     client, monitor, loop = stack
     loop.start()
 
-    # Phase A: write burst well above HIGH_WRITE_THRESHOLD (5 writes/sec)
-    # within the 2s window - 20 writes as fast as the client can go.
+    # Phase A: a write-only burst (100% write share, well above the high
+    # write-share threshold) - 20 writes as fast as the client can go.
     for i in range(20):
         client.write("burst", {"marker": str(uuid.uuid4()), "i": i})
 

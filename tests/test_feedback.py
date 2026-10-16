@@ -9,11 +9,9 @@ import pytest
 
 from adaptive_layer.decision import (
     FAST_SETTINGS,
-    HIGH_WRITE_THRESHOLD,
-    LOW_WRITE_THRESHOLD,
     MODERATE_SETTINGS,
-    READ_HEAVY_RATIO_THRESHOLD,
     SAFE_SETTINGS,
+    Thresholds,
 )
 from adaptive_layer.feedback import FeedbackLoop
 from adaptive_layer.monitor import NEUTRAL_STATS, Stats
@@ -64,21 +62,23 @@ class FakeClient:
 
 
 def hot_stats():
+    """91% writes: well above the default high write share."""
     return Stats(
         read_count=5,
         write_count=50,
         read_write_ratio=0.1,
-        write_freq=HIGH_WRITE_THRESHOLD + 1,
+        write_freq=5.0,
         seconds_since_last_write=0.1,
     )
 
 
 def cold_read_heavy_stats():
+    """No writes at all: well below the default low write share."""
     return Stats(
         read_count=100,
         write_count=0,
         read_write_ratio=float("inf"),
-        write_freq=LOW_WRITE_THRESHOLD - 0.1,
+        write_freq=0.0,
         seconds_since_last_write=None,
     )
 
@@ -175,7 +175,55 @@ def test_tick_moderate_stats_never_triggers_a_switch_from_default(setup):
 
     monitor.set_stats(
         "misc",
-        Stats(read_count=5, write_count=5, read_write_ratio=1.0, write_freq=1.0, seconds_since_last_write=2.0),
+        Stats(read_count=8, write_count=2, read_write_ratio=4.0, write_freq=1.0, seconds_since_last_write=2.0),  # 20% writes
     )
     loop.tick()
     assert client.set_calls == []
+
+
+def test_switch_log_records_each_real_switch_with_trigger_stats(setup):
+    clock, client, monitor, loop = setup
+    monitor.set_stats("orders", hot_stats())
+    loop.tick()  # MODERATE -> SAFE at t=1000
+
+    clock.advance(31)
+    monitor.set_stats("orders", cold_read_heavy_stats())
+    loop.tick()  # SAFE -> FAST at t=1031
+
+    first, second = loop.switch_log
+    assert (first.timestamp, first.collection, first.old, first.new) == (1000.0, "orders", MODERATE_SETTINGS, SAFE_SETTINGS)
+    assert first.stats == hot_stats()
+    assert (second.timestamp, second.old, second.new) == (1031.0, SAFE_SETTINGS, FAST_SETTINGS)
+    assert second.stats == cold_read_heavy_stats()
+
+
+def test_switch_log_ignores_suppressed_and_unchanged_decisions(setup):
+    clock, client, monitor, loop = setup
+    monitor.set_stats("orders", hot_stats())
+    loop.tick()  # real switch
+
+    clock.advance(5)
+    loop.tick()  # decision unchanged -> nothing to log
+    clock.advance(5)
+    monitor.set_stats("orders", cold_read_heavy_stats())
+    loop.tick()  # wants FAST but still in cooldown -> suppressed
+
+    assert len(loop.switch_log) == 1
+    assert len(client.set_calls) == 1
+
+
+def test_loop_uses_the_thresholds_it_is_given():
+    """Same observed traffic, different thresholds -> different decision.
+    hot_stats() is 91% writes: SAFE by default, but only MODERATE if the
+    loop is configured to call anything under 95% writes not-hot."""
+    clock = FakeClock(start=1000.0)
+    client, monitor = FakeClient(), FakeMonitor()
+    loop = FeedbackLoop(
+        client, monitor, interval_seconds=10, cooldown_seconds=30, clock=clock,
+        thresholds=Thresholds(high_write_share=0.95, low_write_share=0.01),
+    )
+    monitor.set_stats("orders", hot_stats())
+
+    loop.tick()
+
+    assert client.set_calls == []  # decide() says MODERATE, which is already active

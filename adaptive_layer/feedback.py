@@ -14,21 +14,43 @@ start()/stop() are what demo_app.py and the benchmark harness actually use.
 
 import threading
 import time
+from dataclasses import dataclass
 
-from adaptive_layer.decision import decide
+from adaptive_layer.decision import DEFAULT_THRESHOLDS, Settings, Thresholds, decide
+from adaptive_layer.monitor import Stats
+
+
+@dataclass(frozen=True)
+class SwitchEvent:
+    """One real settings change: when, for which collection, from what to
+    what, and the Stats that triggered it."""
+
+    timestamp: float
+    collection: str
+    old: Settings
+    new: Settings
+    stats: Stats
 
 
 class FeedbackLoop:
-    def __init__(self, client, monitor, interval_seconds=30, cooldown_seconds=60, clock=time.time):
+    def __init__(
+        self, client, monitor, interval_seconds=30, cooldown_seconds=60, clock=time.time,
+        thresholds: Thresholds = DEFAULT_THRESHOLDS,
+    ):
         self._client = client
         self._monitor = monitor
         self.interval_seconds = interval_seconds
         self.cooldown_seconds = cooldown_seconds
         self._clock = clock
+        self._thresholds = thresholds
 
         # collection -> timestamp of the last time we actually changed its
         # settings (not just evaluated it - see tick()'s logic).
         self._last_switch = {}
+
+        # Every real switch, oldest first. Appended from the loop thread;
+        # read it with list(loop.switch_log) from another thread.
+        self.switch_log: list[SwitchEvent] = []
 
         self._thread = None
         self._stop_event = threading.Event()
@@ -43,7 +65,7 @@ class FeedbackLoop:
         now = self._clock()
         for collection in self._monitor.known_collections():
             stats = self._monitor.get_stats(collection, now=now)
-            decision = decide(stats)
+            decision = decide(stats, self._thresholds)
             current = self._client.get_active_settings(collection)
 
             if decision == current:
@@ -55,6 +77,7 @@ class FeedbackLoop:
 
             self._client.set_active_settings(collection, decision)
             self._last_switch[collection] = now
+            self.switch_log.append(SwitchEvent(now, collection, current, decision, stats))
 
     def run(self):
         """Blocking loop: tick(), sleep interval_seconds, repeat, until

@@ -20,6 +20,12 @@ class Stats:
     write_freq: float  # writes per second, averaged over the window
     seconds_since_last_write: Optional[float]  # None if no write seen in the window
 
+    @property
+    def write_share(self) -> float:
+        """Writes as a fraction of all operations in the window; 0.0 if there were none."""
+        total = self.read_count + self.write_count
+        return self.write_count / total if total else 0.0
+
 
 NEUTRAL_STATS = Stats(
     read_count=0,

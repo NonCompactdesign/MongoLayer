@@ -42,8 +42,9 @@ class AdaptiveClient:
     """Wraps a pymongo MongoClient. Applies each collection's currently
     active settings (see set_active_settings) and logs every operation."""
 
-    def __init__(self, uri, db_name, monitor=None):
+    def __init__(self, uri, db_name, monitor=None, verbose=True):
         self._client = MongoClient(uri)
+        self._verbose = verbose
         self._db = self._client[db_name]
         self._monitor = monitor
         self._active_settings: dict[str, Settings] = {}
@@ -92,10 +93,11 @@ class AdaptiveClient:
     def _log_op(self, collection, op_type, timestamp, latency_ms):
         """Print for visibility, and - if a monitor was supplied - feed it
         so AccessPatternMonitor.get_stats(collection) reflects real traffic."""
-        print(
-            f"[AdaptiveClient] {op_type:5s} collection={collection!r} "
-            f"latency={latency_ms:.2f}ms ts={timestamp:.3f}"
-        )
+        if self._verbose:
+            print(
+                f"[AdaptiveClient] {op_type:5s} collection={collection!r} "
+                f"latency={latency_ms:.2f}ms ts={timestamp:.3f}"
+            )
         if self._monitor is not None:
             self._monitor.record(collection, op_type, timestamp)
 

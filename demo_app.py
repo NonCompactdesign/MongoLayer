@@ -52,7 +52,7 @@ def print_status(client, monitor, collection, expected):
     match = "MATCHES expectation" if settings == expected else "does NOT match expectation (see note below)"
     print(
         f"  stats: reads={stats.read_count} writes={stats.write_count} "
-        f"read_write_ratio={stats.read_write_ratio:.2f} write_freq={stats.write_freq:.2f}/s"
+        f"write_share={stats.write_share:.0%} read_write_ratio={stats.read_write_ratio:.2f} write_freq={stats.write_freq:.2f}/s"
     )
     print(
         f"  ACTIVE SETTINGS -> write_concern={settings.write_concern!r} "
@@ -88,9 +88,8 @@ def phase_read_heavy(client):
 
 def phase_write_burst(client):
     banner("PHASE B: WRITE BURST (expect -> SAFE_SETTINGS)")
-    print("Issuing 60 writes as fast as possible "
-          f"(needs > {WINDOW_SECONDS * 5} writes within the {WINDOW_SECONDS}s window to clear "
-          "the HIGH_WRITE_THRESHOLD of 5.0/s with margin)...")
+    print("Issuing 60 writes and no reads as fast as possible "
+          "(write share ~100%, well above HIGH_WRITE_SHARE)...")
     for i in range(60):
         client.write(COLLECTION, {"marker": str(uuid.uuid4()), "i": i})
 
