@@ -17,8 +17,10 @@
 **2. Start the containers:**
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
+
+`--build` builds `docker/mongo/Dockerfile` (the `mongo:7.0` image plus `iproute2`/`iputils-ping`), which the benchmark uses to inject inter-node network latency with `tc netem`; the containers also get the `NET_ADMIN` capability for the same reason. Without it everything else still works, but the latency sweep will fail.
 
 First run pulls the `mongo:7.0` image (~264MB) — subsequent starts are fast.
 
@@ -37,6 +39,12 @@ rs.initiate({
 '
 ```
 
+**Windows PowerShell note:** bash-style multi-line `--eval '...'` blocks like the one above get mangled by PowerShell's argument quoting when passed through to a native executable (`docker.exe`) — it does *not* preserve nested `"..."` inside `'...'` the way bash does. In PowerShell, use a single-line command with the outer quotes and inner quotes swapped instead:
+
+```powershell
+docker exec mongo1 mongosh --port 27017 --quiet --eval "rs.initiate({ _id: 'rs0', members: [ { _id: 0, host: 'mongo1:27017' }, { _id: 1, host: 'mongo2:27018' }, { _id: 2, host: 'mongo3:27019' } ] })"
+```
+
 **4. Verify:**
 
 ```bash
@@ -44,6 +52,12 @@ docker exec mongo1 mongosh --port 27017 --quiet --eval '
 var s = rs.status();
 s.members.forEach(function(m) { print(m.name + " -> " + m.stateStr); });
 '
+```
+
+PowerShell equivalent:
+
+```powershell
+docker exec mongo1 mongosh --port 27017 --quiet --eval "var s = rs.status(); s.members.forEach(function(m) { print(m.name + ' -> ' + m.stateStr); });"
 ```
 
 Expect one `PRIMARY` and two `SECONDARY`.

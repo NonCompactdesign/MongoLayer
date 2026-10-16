@@ -1,6 +1,9 @@
 services:
   mongo1:
-    image: mongo:7.0
+    image: mongolayer-mongo:7.0
+    build: ./docker/mongo
+    cap_add:
+      - NET_ADMIN
     container_name: mongo1
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
     ports:
@@ -11,7 +14,9 @@ services:
       - rs0net
 
   mongo2:
-    image: mongo:7.0
+    image: mongolayer-mongo:7.0
+    cap_add:
+      - NET_ADMIN
     container_name: mongo2
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27018"]
     ports:
@@ -22,7 +27,9 @@ services:
       - rs0net
 
   mongo3:
-    image: mongo:7.0
+    image: mongolayer-mongo:7.0
+    cap_add:
+      - NET_ADMIN
     container_name: mongo3
     command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27019"]
     ports:
