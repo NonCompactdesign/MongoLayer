@@ -11,6 +11,8 @@ venv/
 # Benchmark output
 results/*.csv
 results/*.png
+results/latency_*/
+results/write_share_eval/
 
 # OS cruft
 .DS_Store

@@ -3,3 +3,5 @@ pytest
 pandas
 matplotlib
 locust
+ipykernel
+nbclient

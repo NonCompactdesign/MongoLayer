@@ -12,13 +12,17 @@ Four scenarios measured:
   static_fast    - FAST_SETTINGS permanently active, no adaptation
   static_safe    - SAFE_SETTINGS permanently active, no adaptation
   adaptive_hot   - real FeedbackLoop, warmed into its SAFE_SETTINGS branch
-                   (sustained high write_freq) before measuring
+                   (write-heavy: high write share) before measuring
   adaptive_cold  - real FeedbackLoop, warmed into its FAST_SETTINGS branch
-                   (read-heavy, low write_freq) before measuring, and kept
+                   (read-heavy: low write share) before measuring, and kept
                    there throughout measurement via filler reads between
-                   trials (a bare write+read trial loop is a 1:1 ratio,
-                   which never satisfies the read-heavy branch on its own -
-                   see decide()'s READ_HEAVY_RATIO_THRESHOLD)
+                   trials (a bare write+read trial loop is 50% writes, which
+                   never satisfies the read-heavy branch on its own - see
+                   decide()'s LOW_WRITE_SHARE)
+
+Each trial also records which settings were actually in force when its read
+ran, so the output states how many trials really ran under the intended
+settings instead of leaving that to inference (in_expected_settings).
 
 Expectation (from the project's design rationale): adaptive_hot's staleness
 rate should land close to static_safe's, and adaptive_cold's should land
@@ -26,9 +30,15 @@ close to static_fast's - i.e. the adaptive layer's rate sits between the
 two static baselines *in the direction its current settings would predict*,
 not literally "always in the middle."
 
+Repeated at each injected inter-node latency level (benchmark/netem.py) and
+for --repeats repeats; results land in
+results/write_share_eval/latency_<N>ms/rep<k>/staleness.csv.
+
 Usage:
-    python benchmark/staleness_test.py
-    python benchmark/staleness_test.py --quick   # smaller trial counts
+    python -m benchmark.staleness_test
+    python -m benchmark.staleness_test --quick          # smaller trial counts, 1 repeat
+    python -m benchmark.staleness_test --latency 0 43   # only these one-way delays (ms)
+    python -m benchmark.staleness_test --repeats 3      # default
 """
 
 import argparse
@@ -38,6 +48,8 @@ import uuid
 from pathlib import Path
 
 from adaptive_layer.client import AdaptiveClient
+from benchmark import netem
+from benchmark.run_benchmark import results_dir_for
 from adaptive_layer.decision import FAST_SETTINGS, SAFE_SETTINGS
 from adaptive_layer.feedback import FeedbackLoop
 from adaptive_layer.monitor import AccessPatternMonitor
@@ -52,8 +64,8 @@ COOLDOWN_SECONDS = 3
 
 FULL_TRIALS = 200
 QUICK_TRIALS = 40
-COLD_TRIAL_SPACING_SECONDS = 2  # keeps write_freq comfortably under LOW_WRITE_THRESHOLD (0.5/s) with WINDOW_SECONDS=6
-COLD_FILLER_READS_PER_TRIAL = 6  # keeps read:write ratio comfortably over READ_HEAVY_RATIO_THRESHOLD (5.0)
+COLD_TRIAL_SPACING_SECONDS = 2  # gives secondaries time to catch up between isolated writes
+COLD_FILLER_READS_PER_TRIAL = 9  # 1 write per 11 operations (~9% writes), comfortably under LOW_WRITE_SHARE (0.15)
 
 
 def _wait_until_settings(client, collection, expected, timeout=15, poll_interval=0.2):
@@ -66,31 +78,37 @@ def _wait_until_settings(client, collection, expected, timeout=15, poll_interval
 
 
 def _one_trial(client, collection, seq):
-    """Write a unique marker, immediately read it back, return True if the
-    read found it (fresh) and False if it missed (stale) or errored."""
+    """Write a unique marker, immediately read it back. Returns (fresh,
+    settings): fresh is True if the read found the marker and False if it
+    missed (stale); settings are the active settings the read ran under."""
     marker = f"{seq}-{uuid.uuid4()}"
     client.write(collection, {"marker": marker, "seq": seq})
+    settings = client.get_active_settings(collection)
     doc = client.read(collection, {"marker": marker})
-    return doc is not None and doc.get("marker") == marker
+    return (doc is not None and doc.get("marker") == marker), settings
 
 
 def measure_static(config_name, settings, collection, trials):
     print(f"\n--- {config_name} ({trials} trials, no warmup needed - settings are fixed) ---")
-    client = AdaptiveClient(URI, DB_NAME)
+    client = AdaptiveClient(URI, DB_NAME, verbose=False)
     client.set_active_settings(collection, settings)
     try:
-        hits = sum(_one_trial(client, collection, i) for i in range(trials))
+        hits = in_expected = 0
+        for i in range(trials):
+            fresh, used = _one_trial(client, collection, i)
+            hits += fresh
+            in_expected += used == settings
     finally:
         client._db.drop_collection(collection)
         client.close()
-    return _report(config_name, trials, hits)
+    return _report(config_name, trials, hits, in_expected)
 
 
 def measure_adaptive_hot(collection, trials, warmup_writes=60):
     print(f"\n--- adaptive_hot ({trials} trials) ---")
-    print(f"Warming up: {warmup_writes} writes to push write_freq above HIGH_WRITE_THRESHOLD...")
+    print(f"Warming up: {warmup_writes} writes to push the write share above HIGH_WRITE_SHARE...")
     monitor = AccessPatternMonitor(window_seconds=WINDOW_SECONDS)
-    client = AdaptiveClient(URI, DB_NAME, monitor=monitor)
+    client = AdaptiveClient(URI, DB_NAME, monitor=monitor, verbose=False)
     loop = FeedbackLoop(client, monitor, interval_seconds=INTERVAL_SECONDS, cooldown_seconds=COOLDOWN_SECONDS)
     loop.start()
     try:
@@ -102,19 +120,23 @@ def measure_adaptive_hot(collection, trials, warmup_writes=60):
         else:
             print("  reached SAFE_SETTINGS, measuring (trials themselves keep it hot)...")
 
-        hits = sum(_one_trial(client, collection, i) for i in range(trials))
+        hits = in_expected = 0
+        for i in range(trials):
+            fresh, used = _one_trial(client, collection, i)
+            hits += fresh
+            in_expected += used == SAFE_SETTINGS
     finally:
         loop.stop()
         client._db.drop_collection(collection)
         client.close()
-    return _report("adaptive_hot", trials, hits)
+    return _report("adaptive_hot", trials, hits, in_expected)
 
 
 def measure_adaptive_cold(collection, trials, warmup_reads=30):
     print(f"\n--- adaptive_cold ({trials} trials, spaced {COLD_TRIAL_SPACING_SECONDS}s apart - this takes a while) ---")
-    print(f"Warming up: seed write + {warmup_reads} reads to push read:write ratio above READ_HEAVY_RATIO_THRESHOLD...")
+    print(f"Warming up: seed write + {warmup_reads} reads to push the write share below LOW_WRITE_SHARE...")
     monitor = AccessPatternMonitor(window_seconds=WINDOW_SECONDS)
-    client = AdaptiveClient(URI, DB_NAME, monitor=monitor)
+    client = AdaptiveClient(URI, DB_NAME, monitor=monitor, verbose=False)
     loop = FeedbackLoop(client, monitor, interval_seconds=INTERVAL_SECONDS, cooldown_seconds=COOLDOWN_SECONDS)
     loop.start()
     try:
@@ -127,9 +149,11 @@ def measure_adaptive_cold(collection, trials, warmup_reads=30):
         else:
             print("  reached FAST_SETTINGS, measuring (with filler reads to stay cold)...")
 
-        hits = 0
+        hits = in_expected = 0
         for i in range(trials):
-            hits += _one_trial(client, collection, i)
+            fresh, used = _one_trial(client, collection, i)
+            hits += fresh
+            in_expected += used == FAST_SETTINGS
             for _ in range(COLD_FILLER_READS_PER_TRIAL):
                 client.read(collection, {})
             time.sleep(COLD_TRIAL_SPACING_SECONDS)
@@ -137,69 +161,86 @@ def measure_adaptive_cold(collection, trials, warmup_reads=30):
         loop.stop()
         client._db.drop_collection(collection)
         client.close()
-    return _report("adaptive_cold", trials, hits)
+    return _report("adaptive_cold", trials, hits, in_expected)
 
 
-def _report(config_name, trials, hits):
+def _report(config_name, trials, hits, in_expected):
     misses = trials - hits
     stale_rate = misses / trials
-    print(f"  {config_name}: {hits}/{trials} fresh, {misses}/{trials} stale ({stale_rate:.1%} stale rate)")
-    return {"config": config_name, "trials": trials, "hits": hits, "misses": misses, "stale_rate": stale_rate}
+    print(f"  {config_name}: {hits}/{trials} fresh, {misses}/{trials} stale ({stale_rate:.1%} stale rate); "
+          f"{in_expected}/{trials} trials ran under the intended settings")
+    return {
+        "config": config_name, "trials": trials, "hits": hits, "misses": misses,
+        "stale_rate": stale_rate, "in_expected_settings": in_expected,
+    }
+
+
+def run_all(trials):
+    """The four staleness scenarios at whatever latency is currently injected."""
+    results = [
+        measure_static("static_fast", FAST_SETTINGS, "staleness_static_fast", trials),
+        measure_static("static_safe", SAFE_SETTINGS, "staleness_static_safe", trials),
+        measure_adaptive_hot("staleness_adaptive_hot", trials),
+        # adaptive_cold is paced (COLD_TRIAL_SPACING_SECONDS per trial) - use fewer
+        # trials by default even in "full" mode, or this scenario alone dominates
+        # total runtime for no real statistical benefit.
+        measure_adaptive_cold("staleness_adaptive_cold", min(trials, 60)),
+    ]
+    return results
+
+
+def run_suite(latency_ms, trials, rep=1):
+    """Run all scenarios at one latency level and write its staleness.csv.
+    Always clears the injected latency afterwards."""
+    netem.apply_latency(latency_ms)
+    try:
+        results = run_all(trials)
+    finally:
+        netem.clear()
+
+    out_dir = results_dir_for(latency_ms, rep)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "staleness.csv"
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["config", "trials", "hits", "misses", "stale_rate", "in_expected_settings"])
+        writer.writeheader()
+        writer.writerows(results)
+    print(f"\nWrote {out_path}")
+    return results
+
+
+def print_summary(latency_ms, results, rep=1):
+    print("\n" + "=" * 60)
+    print(f"SUMMARY - inter-node one-way delay {latency_ms} ms, repeat {rep}")
+    print("=" * 60)
+    print(f"{'config':<16} {'trials':>7} {'stale':>7} {'stale_rate':>11} {'intended settings':>18}")
+    for r in results:
+        print(f"{r['config']:<16} {r['trials']:>7} {r['misses']:>7} {r['stale_rate']:>10.1%} "
+              f"{r['in_expected_settings']:>12}/{r['trials']}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--quick", action="store_true", help="fewer trials, for fast iteration")
+    parser.add_argument(
+        "--latency", nargs="+", type=int, default=netem.LATENCY_LEVELS_MS,
+        help="one-way inter-node delays in ms to sweep (default: %(default)s)",
+    )
+    parser.add_argument("--repeats", type=int, default=None, help="repeats of the whole sweep (default: 3, or 1 with --quick)")
     args = parser.parse_args()
     trials = QUICK_TRIALS if args.quick else FULL_TRIALS
+    repeats = args.repeats if args.repeats is not None else (1 if args.quick else 3)
 
-    results = []
-    results.append(measure_static("static_fast", FAST_SETTINGS, "staleness_static_fast", trials))
-    results.append(measure_static("static_safe", SAFE_SETTINGS, "staleness_static_safe", trials))
-    results.append(measure_adaptive_hot("staleness_adaptive_hot", trials))
-    # adaptive_cold is paced (COLD_TRIAL_SPACING_SECONDS per trial) - use fewer
-    # trials by default even in "full" mode, or this scenario alone dominates
-    # total runtime for no real statistical benefit.
-    cold_trials = min(trials, 60)
-    results.append(measure_adaptive_cold("staleness_adaptive_cold", cold_trials))
+    for rep in range(1, repeats + 1):
+        for latency_ms in args.latency:
+            print(f"\n##### repeat {rep}/{repeats}, latency {latency_ms} ms one-way "
+                  f"({netem.LATENCY_LABELS.get(latency_ms, 'custom')}) #####")
+            print_summary(latency_ms, run_suite(latency_ms, trials, rep), rep)
 
-    print("\n" + "=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
-    print(f"{'config':<16} {'trials':>7} {'stale':>7} {'stale_rate':>11}")
-    for r in results:
-        print(f"{r['config']:<16} {r['trials']:>7} {r['misses']:>7} {r['stale_rate']:>10.1%}")
-
-    RESULTS_DIR.mkdir(exist_ok=True)
-    out_path = RESULTS_DIR / "staleness.csv"
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["config", "trials", "hits", "misses", "stale_rate"])
-        writer.writeheader()
-        writer.writerows(results)
-    print(f"\nWrote {out_path}")
-
-    hot_rate = next(r["stale_rate"] for r in results if r["config"] == "adaptive_hot")
-    cold_rate = next(r["stale_rate"] for r in results if r["config"] == "adaptive_cold")
-    safe_rate = next(r["stale_rate"] for r in results if r["config"] == "static_safe")
-    fast_rate = next(r["stale_rate"] for r in results if r["config"] == "static_fast")
-    print("\nInterpretation note: static_fast and static_safe hammer 200 back-to-back "
-          "writes with zero delay - sustained write pressure that gives secondaries a "
-          "perpetual replication backlog. adaptive_hot inherits that same pressure (its "
-          "trials are also back-to-back), so it's directly comparable to static_fast/safe. "
-          "adaptive_cold's trials are deliberately spaced out - that pacing is *why* the "
-          "Decision Engine grants it FAST_SETTINGS in the first place (low write_freq), and "
-          "it also means secondaries have time to fully catch up between each isolated "
-          "write. So adaptive_cold showing LOWER staleness than static_fast under the same "
-          "settings isn't a discrepancy to explain away - it's evidence that the adaptive "
-          "layer picks FAST_SETTINGS specifically in the conditions where that setting's "
-          "staleness cost is smallest, which a fixed static_fast policy can't do (it pays "
-          "FAST_SETTINGS' staleness cost even under write pressure, since it never changes).")
-    print(f"\n  adaptive_hot ({hot_rate:.1%}) vs static_safe ({safe_rate:.1%}) - directly "
-          f"comparable, both under sustained write pressure: "
-          f"{'consistent' if abs(hot_rate - safe_rate) <= abs(hot_rate - fast_rate) else 'diverged - investigate'}")
-    print(f"  adaptive_cold ({cold_rate:.1%}) vs static_fast ({fast_rate:.1%}) - NOT directly "
-          f"comparable (different write pressure by design); adaptive_cold <= static_fast is "
-          f"the expected and desired direction, not a target to match exactly.")
+    print("\nNote: adaptive_cold's trials are deliberately spaced out, so it is NOT directly comparable "
+          "to static_fast; adaptive_hot and static_safe are both under sustained write pressure and are. "
+          "The 'intended settings' column says how many trials really ran under the settings each "
+          "scenario is named for.")
 
 
 if __name__ == "__main__":
