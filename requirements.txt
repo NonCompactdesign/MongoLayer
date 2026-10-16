@@ -3,4 +3,3 @@ pytest
 pandas
 matplotlib
 locust
-flask
