@@ -244,3 +244,71 @@ Check off phases as you go (`- [x]`) so the team can see progress at a glance.
 - **Granularity:** per-collection (default plan above) vs. per-document (`_id`) monitoring — stay per-collection through DA-II; only attempt per-key as a stretch goal if Phase 11 leaves spare time before DA-III.
 - **ML stretch goal:** the rule-based Decision Engine (Phase 4) is the examinable core. A logistic-regression variant is optional novelty points — only attempt it after Phase 13's core deliverables are safely done, as an additional Phase 14 if time allows.
 - **Team split (if 2–3 people):** Phases 0–2 and 8–9 (infra/plumbing) parallelize well; Phases 3–6 (the core adaptive logic) benefit from one owner for consistency; Phase 11–13 (analysis/report) is natural work for whoever isn't heads-down on code late in the timeline.
+
+---
+
+## Status and re-plan (2026-10-16)
+
+This section supersedes the checklist above for what remains. Phases 0-11 are done; the remaining work is a revised Phase 12, Phase 13, and a new last phase for the web interface.
+
+### Verified state
+
+| Area | State | How it was checked |
+|---|---|---|
+| Middleware (`adaptive_layer/`) | Implemented | Reads and imports cleanly; `FeedbackLoop` now records every switch in `switch_log` |
+| Unit tests (no database) | 31 pass | `pytest tests/test_monitor.py tests/test_decision.py tests/test_feedback.py` |
+| Integration tests (5, need the replica set) | **Not re-verified** | Docker had no images, volumes or containers at the start of this session; the cluster must be rebuilt first |
+| Last full evaluation | On disk, complete | 120 benchmark runs (5 latency levels x 8 traffic presets x 3 configs), 0 failed requests, 11,724,158 requests; 20 staleness measurements, 3,300 trials |
+| Web interface | Removed from the working tree | No `dashboard`, Flask, or port-8080 references remain in code or live docs. The 7 files are still in commit `649e248` (`git checkout 649e248 -- dashboard` restores them). Flask stays installed only because Locust depends on it |
+| Git | Nothing committed since `649e248` | 28 uncommitted entries |
+
+**Core finding, reproduced with the project's own monitor and `decide()`:** at the load-test rates every one of the 8 traffic presets decides SAFE (write rates 10 to 499 writes/s against a SAFE threshold of 5 writes/s). FAST needs under 0.5 writes/s, which at 250 ops/s is under about 0.2% writes. So the adaptive configuration behaves like Static Safe, and this is a scale problem in the rule, not a matter of nudging the constants. This was reproduced on simulated traffic at the target rates; the real runs did not log the chosen settings.
+
+### Phase 12 (revised): make the adaptive layer able to win, and prove it
+
+Decisions taken (2026-10-16): the rule uses **write share**; the sweep is **3 latency levels (0, 5, 43 ms) x 3 repeats**; the two stale snapshot docs were deleted and will be remade.
+
+| # | Step | State |
+|---|---|---|
+| 0 | Restore the environment | **Done 2026-10-17**: image pulled (slow link), `docker compose up -d --build`, replica set initiated; full suite **71 / 71 pass** including the 5 live tests; `netem` verified (round trip 10.3 ms at 5 ms and 86.3 ms at 43 ms, client path unaffected, cleared afterwards); `demo_app.py` matches all three phases |
+| 1 | Switch log per adaptive run | **Done and verified** on real runs (`<config>_<preset>_switches.csv`, summarised as share of time per setting) |
+| 2 | Write-share rule with `Thresholds` parameters (FAST < 0.15, SAFE > 0.40, fixed before the re-run, rationale in `decision.py`) | **Done and verified**: unit tests, live tests, demo, and what adaptive actually chose on all nine presets (see findings below) |
+| 3 | Presets that reach every branch | **Done**: `MODEST_WRITES` (25% writes) added for MODERATE; READ_HEAVY / SPIKE / MIXED_BURSTY reach FAST. Low-rate presets were dropped: the unit test shows the rule is scale-independent |
+| 4 | Staleness inside the load test | **Done and verified**: about 2% of iterations are probes (write, then immediate read of that document by `_id`), tallied by the settings in force into `<config>_<preset>_probe.csv`; stale probes are not Locust failures; tables and chart added to the notebook and analysis |
+| 5 | `adaptive_cold` pacing | **Done and verified**: 9 filler reads per trial; each trial records the settings in force, and all 40 of 40 trials at 43 ms ran under FAST |
+| 6 | Sweep with repeats | **Deferred to the end by decision (2026-10-16): until the project is finished only quick checks are run (see below); the 3x3 full-length runs for presented results come last.** Pipeline done and tested (`--repeats`, `--duration-scale`, mean and std, pooled staleness, new folder `results/write_share_eval/`); not yet run. Full length is about **19.7 hours** (9 presets x 3 configs x 3 levels x 3 repeats); with `--duration-scale 0.4` about 8 hours |
+| 7 | Edge cases: stop one secondary mid-run | **Not done** (the cluster is available now) |
+| 8 | Write down the tuning rationale | Thresholds and reasoning are in `decision.py`; the report text is still to write after the run |
+
+**Findings from the verification runs (2026-10-17; quick runs, single run each, so qualitative):**
+
+- **Steady traffic picks the expected setting.** Adaptive's time in each setting, after the first 5 s that the loop needs for its first decision (so MODERATE for the first 5 s of every run): READ_HEAVY went to FAST; WRITE_HEAVY, BALANCED, HOTSPOT, RAMP and HIGH_CONCURRENCY went to SAFE; MODEST_WRITES stayed in MODERATE (no switch at all). So on the 50%+ write presets adaptive will behave like Static Safe by design.
+- **The 15 s window averages out MIXED_BURSTY.** Phases flip every 15 s, equal to the window, so the window never clears: write share swings only between about 0.34 and 0.65-0.92. In an 89 s run adaptive never returned to FAST after the first period and alternated MODERATE and SAFE (7 switches; FAST 17% / MODERATE 51% / SAFE 32% of the time). It does not track the bursts.
+- **SPIKE bursts are diluted.** The 3 s bursts only lift the 15 s window to about 0.22-0.24 write share, so adaptive alternated FAST and MODERATE on the 20 s cycle and reached SAFE only once, at start-up, when the first window held only 5 s of data (share 0.59). It is never SAFE during a burst.
+- **FAST really is stale at distance, even for a read-heavy collection.** `adaptive_cold` at 43 ms, all trials under FAST: 28 of 40 stale (70%), the same as `static_fast` (26 of 40, 65%). The earlier ~5% figure came from the scenario being mostly in MODERATE. A low write share does not make read-after-write safe on `nearest` / `local` reads; whether FAST is acceptable depends on whether the application reads its own writes.
+- **Single quick-run latency differences are noise.** Adaptive's p95 in three identical READ_HEAVY runs was 81, 33 and 11 ms; the static configurations varied between 12 and 28 ms. Close other applications during the long runs and rely on the repeats.
+- **Claim check at 43 ms (60 s runs, 10 users, one run per cell; files in `results/write_share_eval/_checks/claims_43ms/`):** READ_HEAVY: write median 4 / 180 / 4 ms and write p95 8 / 180 / 6 ms for Fast / Safe / Adaptive, in-load stale probes 39 of 60 (65%) / 0 of 44 / 33 of 52 (63%), adaptive in FAST 92% of the run. WRITE_HEAVY: write median 4 / 170 / 180 ms, stale probes 46 of 52 (88%) / 0 of 53 / 0 of 59, adaptive in SAFE 91% of the run. So adaptive matched Fast on read-heavy latency and Safe on write-heavy consistency, inheriting each one's cost (Fast's staleness; Safe's write latency). Fast was staler under write-heavy load (88%) than read-heavy (65%), which supports avoiding FAST on write-heavy traffic. Reads were 2-4 ms under every configuration at this light load.
+
+**Open design questions raised by these findings (for the user, not decided):** (a) **decided 2026-10-17: keep window / interval / cooldown at 15 / 5 / 10 s** (set in Phase 8, before this work). Traffic that changes faster than the window cannot be tracked, which is an expected limit of any windowed adaptive system, and the report states it. Offline replay of the benchmark traffic through the real monitor, decision rule and loop (fake clock) showed the match with a perfect tracker is 18% (MIXED_BURSTY) and 30% (SPIKE) at 15/5/10 against 75% and 61% at 5/2/5, steady traffic is unaffected, and cooldown mostly guards against flapping; low-traffic behaviour of short windows was not tested; (b) there is no static MODERATE baseline, so on MODEST_WRITES adaptive is compared only with Fast and Safe; (c) the FAST staleness cost for applications that read their own writes (for example by using sessions or causal consistency, which this project does not do).
+
+**Checking runs until then (quick mode, 1 repeat):** all 9 presets x 3 levels is about 37 min plus about 3 min staleness; 4 key presets (READ_HEAVY, WRITE_HEAVY, MIXED_BURSTY, MODEST_WRITES) x 2 levels (0, 43 ms) about 10 min; one preset at one level about 1 min. Caveat: quick runs are 20 s, shorter than the adaptive loop's timing (15 s window, 5 s interval, 10 s cooldown), so they can confirm which setting adaptive picks on steady traffic but cannot show it tracking MIXED_BURSTY or SPIKE; check those two with a longer run of just that preset (for example 90 s).
+
+**Definition of Done:** adaptive's latency and staleness are measured against both baselines on traffic that exercises all three branches, with repeats; the switch log shows what it chose; the edge cases are tried; the rationale is written.
+
+### Phase 13: final report, demo rehearsal, slides (unchanged)
+
+Write the final report from the final evaluation (the Review II report is archived outside the repo, in `MongoLayer_archive/`); rerun `demo_app.py` timed, twice.
+
+### Phase 14 (new, last): web interface
+
+Deferred on purpose until everything above is done. It is rebuilt on the final, tuned middleware, so it should show the real behaviour (settings changes, monitor stats, per-node counters) rather than a stale design. The previous version (Flask + vanilla JS, traffic sliders, live settings, per-node opcounters) is in commit `649e248` as a starting point.
+
+### Phase 15 (optional stretch): logistic-regression decision engine, per-document monitoring
+
+Unchanged from "Open decisions" above; only after Phase 13 is safely done.
+
+### Housekeeping (do early)
+
+- Commit in logical groups (latency injection and Docker image; benchmark and notebook; docs; web interface removal) so the removal is a clear, revertable commit.
+- Stale docs were removed on 2026-10-17: `DA2_REVIEW_SUMMARY.md`, `results_for_professor/REPORT.md` (deleted) and `DA2_Report.md` plus the rest of `results_for_professor/` (moved to `MongoLayer_archive/`, outside the repo). `DA2 Report.pdf` and `experiments_run1_old_rule.ipynb` stay untracked on purpose.
+- `docs/PROJECT_DOCUMENTATION.md` was refreshed on 2026-10-16 to match the code; re-check it after any further change.
