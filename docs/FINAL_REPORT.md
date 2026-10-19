@@ -52,7 +52,7 @@ distances it still picks FAST, where FAST gains nothing. The 0% stale figure app
 11. [Conclusion](#11-conclusion)
 **Diagrams:** original layer (§3.1) · deployment (§3.2) · components (§3.3) · decision pipeline (§3.4) ·
 state machine (§3.5) · write/read and feedback-tick sequences (§3.6) · network setups and link shaping
-(§6.1) · one load-test run (§6.1) · evaluation pipeline (§6.7)
+(§6.1) · one load-test run (§6.1) · evaluation pipeline (§6.7) · file interactions (§3.8) · every file (§3.9)
 
 - [Appendix A: every load-test result](#appendix-a-every-load-test-result)
 - [Appendix B: equal 5 ms data (earlier code version)](#appendix-b-equal-5-ms-data-earlier-code-version)
@@ -435,6 +435,212 @@ sequenceDiagram
 
 The locked sections only touch dicts and deques and never wait on I/O, so under gevent's
 cooperative scheduling they cannot be interrupted, and with real threads they are ordinary locks.
+
+### 3.8 How the files interact
+
+Everything below was read from the code on this branch: solid arrows are `import` statements
+(extracted from every `.py` file with Python's `ast` module); dashed arrows are run-time
+interactions (subprocesses, `docker exec`, database calls, files written and read). One graph per
+concern, so each stays readable.
+
+#### (a) The middleware: `adaptive_layer/`
+
+```mermaid
+flowchart TB
+    APP["application code<br/>(locustfile, demo_app,<br/>signals_check, staleness_test)"]
+    AC["client.py<br/>AdaptiveClient"]
+    MO["monitor.py<br/>AccessPatternMonitor, Stats"]
+    DE["decision.py<br/>Settings, Thresholds,<br/>decide_explained"]
+    RU["rules.py<br/>apply_rules, SignalConfig,<br/>CollectionPolicy, Decision"]
+    FB["feedback.py<br/>FeedbackLoop, SwitchEvent"]
+    LK["_locks.py<br/>native_lock"]
+    DB[("MongoDB rs0")]
+    APP -->|"write() / read()"| AC
+    AC -.->|"record(op, latency, settings name)"| MO
+    AC -.->|"insert_one / find_one with the active settings"| DB
+    FB -.->|"get_stats()"| MO
+    FB -->|"apply_rules()"| RU
+    RU -->|"decide_explained()"| DE
+    FB -.->|"set_active_settings()"| AC
+    AC --> DE
+    DE --> MO
+    RU --> MO
+    FB --> MO
+    AC --> LK
+    MO --> LK
+```
+
+The client never imports the feedback loop; the loop pushes settings into the client through
+`set_active_settings()`. `rules.py` and `decision.py` are pure (no I/O), which is why they are the
+most heavily unit-tested files.
+
+#### (b) One load-test run, end to end
+
+```mermaid
+flowchart TB
+    NB["signals_evaluation.ipynb"] -->|"import"| SE["signals_eval.py<br/>run_load_tests()"]
+    RNB["run_notebook.py"] -.->|"executes, saves after every cell"| NB
+    SE -->|"run_one(..., timeout_s)"| RB["run_benchmark.py"]
+    RB -.->|"subprocess: python -m locust -f locustfile.py<br/>env BENCHMARK_MODE, WORKLOAD_PRESET, *_LOG"| LF["locustfile.py<br/>50 users, 98% ops + 2% probes"]
+    LF -->|"import"| MW["adaptive_layer<br/>client + monitor + feedback + rules"]
+    MW -.-> DB[("MongoDB rs0")]
+    LF -.->|"writes"| F1["*_stats.csv (Locust)<br/>*_probe.csv (probe_log.py)<br/>*_switches.csv (switch_log.py)<br/>*_client.json"]
+    RB -.->|"reads *_stats.csv, returns a summary"| SE
+    SE -.->|"writes, one per run"| F2["*.done marker<br/>(resume after an interruption)"]
+    SR["signals_report.py<br/>summarise()"] -.->|"reads"| F1
+    SE -->|"import"| SR
+    SE -.->|"writes"| F3["summary.csv, staleness.csv,<br/>expectations.csv, figs/*.png,<br/>run_meta.json, run_log.txt"]
+    SE -.->|"store_record()"| REC["docs/results/signals/&lt;tag&gt;/"]
+```
+
+#### (c) The test bed: distances and the pinned primary
+
+```mermaid
+flowchart TB
+    SE["signals_eval.py"] --> TP["topology.py<br/>T1, T2, equal()"]
+    RB["run_benchmark.py"] --> TP
+    SC["signals_check.py"] --> TP
+    SE --> CL["cluster.py<br/>pin_primary()"]
+    RB --> CL
+    SC --> CL
+    TP -->|"import: _exec, _run, _ip, IFACE, IFB, NODES, clear"| NE["netem.py"]
+    ST["staleness_test.py"] --> NE
+    NE -.->|"docker exec: tc qdisc / tc filter / ip link"| N["mongo1, mongo2, mongo3<br/>(NET_ADMIN, iproute2)"]
+    TP -.->|"docker inspect: bridge gateway = the client's address"| N
+    CL -.->|"replSetGetConfig / replSetReconfig / replSetGetStatus"| N
+```
+
+#### (d) The other entry points
+
+```mermaid
+flowchart LR
+    EXP["experiments.ipynb<br/>(equal-latency sweep from main)"] --> RB["run_benchmark.py"]
+    EXP --> ST["staleness_test.py"]
+    EXP --> AR["analyze_results.py"]
+    AR --> PL["probe_log.py"]
+    AR --> SL["switch_log.py"]
+    AR --> RB
+    ST --> RB
+    DEMO["demo_app.py"] --> MW["adaptive_layer<br/>client, monitor, feedback, decision"]
+    SC["signals_check.py<br/>(also run alone)"] --> MW
+    ST --> MW
+```
+
+#### (e) Which test covers which file
+
+```mermaid
+flowchart LR
+    T1["test_decision.py (22)"] --> DE["decision.py"]
+    T2["test_rules.py (15)"] --> RU["rules.py"]
+    T2 --> DE
+    T3["test_monitor.py (9)"] --> MO["monitor.py"]
+    T4["test_feedback.py (10)"] --> FB["feedback.py"]
+    T5["test_signals_plumbing.py (15)"] --> MO
+    T5 --> FB
+    T5 --> AC["client.py"]
+    T5 --> LK["_locks.py"]
+    T5 --> TP["topology.py"]
+    T6["test_signals_eval.py (9)"] --> SE["signals_eval.py"]
+    T6 --> RB["run_benchmark.py"]
+    T7["test_run_benchmark.py (10)"] --> RB
+    T8["test_analyze_results.py (11)"] --> AR["analyze_results.py"]
+    T9["test_switch_log.py (3)"] --> SL["switch_log.py"]
+    T10["test_probe_log.py (3)"] --> PL["probe_log.py"]
+    T10 --> LFC["_locustfile_probe_check.py"]
+    T11["test_client_smoke.py (4, live)"] --> AC
+    T12["test_feedback_integration.py (1, live)"] --> FB
+```
+
+Numbers in brackets are the tests pytest collects from each file (112 in total); "live" files need
+the running replica set.
+
+### 3.9 Every file, what it does
+
+Line counts are from the files on this branch. "Reads / writes" lists files, databases and
+external commands; in-memory only means the file touches nothing outside the process.
+
+#### Middleware — `adaptive_layer/`
+
+| File | Lines | What it does | Main contents | Reads / writes | Used by |
+|---|---|---|---|---|---|
+| `__init__.py` | 0 | Marks the package | – | – | – |
+| `client.py` | 189 | The only object the application talks to. `write()` / `read()` look up the collection's active settings and apply them (write concern; read concern + read preference). Logs every operation, failed ones too, to the monitor with its latency and settings name. Per-key read-your-own-writes (#6): remembers the `key_field` value and `_id` of each written document for N s, and sends a FAST read that asks for one of them by equality to the primary, counting it in `redirected_reads` | `AdaptiveClient` (`write`, `read`, `set_active_settings`, `get_active_settings`, `_remember`, `_recently_written`, `_log_op`, `mongo_client`); `_resolve_read_preference()` | MongoDB collections (pymongo); nothing on disk | locustfile, signals_check, staleness_test, demo_app, tests |
+| `monitor.py` | 153 | Sliding-window statistics per collection: read/write counts, write share, write rate, seconds since last write, and the p95 write latency per settings name (for the budget, #9). Thread-safe with `native_lock` | `Stats` (`write_share`, `write_p95`), `NEUTRAL_STATS`, `AccessPatternMonitor` (`record`, `get_stats`, `known_collections`, `_prune`), `_p95()` | in-memory only | client, feedback, rules, decision |
+| `decision.py` | 130 | The traffic rule and the vocabulary of settings. Write share > 0.40 → SAFE, < 0.15 → FAST, else MODERATE; hysteresis (#8) keeps SAFE above 0.35 and FAST below 0.20 when the margin is set; every result comes with its reason (#10) | `Settings`, `SAFE_SETTINGS`, `FAST_SETTINGS`, `MODERATE_SETTINGS`, `LEVELS`, `BY_NAME`, `Thresholds` (with `hysteresis`), `decide_explained()`, `decide()`, `settings_name()` | pure (no I/O) | rules, feedback, client, switch_log, locustfile, tests |
+| `rules.py` | 109 | The full decision for one collection: traffic rule → SAFE latency budget (#9: SAFE → MODERATE when SAFE writes' p95 > 100 ms with ≥ 20 samples) → policy clamp (#5: floor / ceiling), collecting a reason at each step | `SIGNALS_THRESHOLDS` (hysteresis 0.05), `SignalConfig` (budget 100 ms, 20 samples, 60 s back-off), `CollectionPolicy` (`clamp`), `NO_POLICY`, `Decision` (`reason`), `apply_rules()` | pure (no I/O) | feedback, locustfile, signals_check, tests |
+| `feedback.py` | 157 | The control loop. A background thread that, every interval, decides each known collection, applies a change only when it differs and the cooldown has passed, remembers a budget breach for 60 s so it does not bounce straight back into SAFE, applies policies at start-up, and logs every switch with its reason | `SwitchEvent` (with `reason`), `FeedbackLoop` (`decide`, `tick`, `run`, `start`, `stop`, `_safe_write_p95`, `switch_log`, `last_decisions`) | in-memory only (reads the monitor, writes the client's active settings) | locustfile, signals_check, staleness_test, demo_app, tests |
+| `_locks.py` | 26 | Returns a plain OS lock even when gevent has monkey-patched `threading` (as Locust does). Fix for the overnight hang (§5.2) | `native_lock()` | – | client, monitor |
+
+#### Evaluation pipeline — `benchmark/`
+
+| File | Lines | What it does | Main contents | Reads / writes | Used by |
+|---|---|---|---|---|---|
+| `__init__.py` | 0 | Marks the package | – | – | – |
+| `locustfile.py` | 279 | The workload Locust runs. Builds one shared client, monitor and (for adaptive modes) feedback loop per run; mode `static_fast` / `static_moderate` / `static_safe` / `adaptive` / `adaptive_signals`; 10 workload presets (write probability and key choice); 2% of iterations are staleness probes (write, then read back by `_id`) | `current_write_probability()`, `pick_key()`, `on_test_start()`, `on_test_stop()`, `AdaptiveMongoUser` (`read_or_write`, `_probe`, `_report`) | env `BENCHMARK_*`; MongoDB db `benchmark`; writes `*_probe.csv`, `*_switches.csv`, `*_client.json` (Locust itself writes `*_stats.csv`, `*_stats_history.csv`, `*_failures.csv`, `*_exceptions.csv`) | run_benchmark (as a subprocess) |
+| `run_benchmark.py` | 323 | Runs one Locust subprocess per (configuration × preset), on an equal latency level or a topology, with the per-preset run lengths; summarises Locust's CSV; the watchdog kills a run that overruns by killing its whole process tree | `CONFIGS`, `ADAPTIVE_CONFIGS`, `PRESETS`, `FULL_DEFAULT`, `FULL_OVERRIDES`, `params_for()`, `run_one()`, `_run_with_watchdog()`, `_kill_tree()`, `run_suite()`, `results_dir_for()`, `topology_dir_for()`, `main()` | starts `locust`; reads `*_stats.csv`; result folders `results/write_share_eval/latency_<N>ms/rep<k>/` or `results/signals_eval/topology_<name>/rep<k>/` | signals_eval, staleness_test, analyze_results, signals_report, experiments.ipynb, tests |
+| `staleness_test.py` | 250 | The isolated staleness experiment: for each scenario, write a unique marker and immediately read it back, 200 trials (adaptive_cold 60, spaced 2 s apart). Scenarios: static_fast, static_moderate, static_safe, adaptive_hot (warmed into SAFE), adaptive_cold (warmed into FAST) | `measure_static()`, `measure_adaptive_hot()`, `measure_adaptive_cold()`, `_one_trial()`, `run_all()`, `run_suite()`, `main()` | MongoDB db `staleness_test`; `run_suite()` writes `staleness.csv` (signals_eval writes `staleness_<setup>.csv` itself) | signals_eval, experiments.ipynb |
+| `analyze_results.py` | 565 | Analysis for the equal-latency sweep notebook: loads every run folder, aggregates over repeats (mean and std), pools staleness and probes, builds the time-in-settings tables and all charts | `run_analysis()`, `load_all()`, `aggregate_benchmark()`, `pool_staleness()`, `load_switch_timelines()`, `load_probes()`, `split_config()`, the `make_*_chart()` functions | reads `results/write_share_eval/…`; writes summary CSVs and `fig_*.png` there | experiments.ipynb, tests |
+| `signals_eval.py` | 605 | Everything the evaluation notebook runs: the `Plan` and its time estimate, preflight checks, live checks, load tests with `.done` resume markers and one retry after a watchdog kill, the staleness experiment, analysis (integrity checks and the expectations stated before the run), five figures, and the committable record | `Plan`, `CORE_PRESETS`, `estimate()`, `preflight()`, `run_live_checks()`, `run_load_tests()`, `run_staleness()`, `analyse()`, `integrity()`, `expectations()`, `figure_metric()`, `figure_settings()`, `figure_staleness()`, `store_record()`, `write_meta()`, `Log` | `results/signals_eval/<tag>/`: `run_meta.json`, `run_log.txt`, `preflight.json`, `checks.json`, `*.done`, `staleness_<setup>.csv`, `summary.csv`, `staleness.csv`, `expectations.csv`, `figs/*.png`; copies the record to `docs/results/signals/<tag>/` | signals_evaluation.ipynb, tests |
+| `signals_check.py` | 251 | Five live scenarios, PASS/FAIL each: C1 distances, C2 own writes (#6), C3 policy (#5), C4 budget (#9), C5 hysteresis (#8); each also checks every switch has a reason (#10) | `Traffic`, `make()`, `session()`, `c1_distances()` … `c5_hysteresis()`, `SCENARIOS`, `main()` | MongoDB db `signals_check`; applies topologies; writes `results/signals_eval/checks.json` when run alone | signals_eval, command line |
+| `signals_report.py` | 114 | Turns topology run folders into one table: read/write p50 and p95, failures, stale probes overall and per setting, time in each setting, switch count and most common reasons, redirected reads | `summarise()`, `to_markdown()`, `_kind()`, `main()` | reads `topology_*/rep*/` CSVs and JSON; writes `summary.csv` when run alone | signals_eval |
+| `run_notebook.py` | 44 | Runs a notebook headlessly with its own kernel, saving after every cell | `main()` | reads and rewrites the `.ipynb` | command line |
+| `probe_log.py` | 41 | The staleness-probe tally per settings name | `ProbeTally` (`record`, `totals`, `write`), `read_probe_csv()` | writes / reads `*_probe.csv` (`settings, probes, stale`) | locustfile, analyze_results, signals_report, tests |
+| `switch_log.py` | 44 | The switch log of an adaptive run and the time spent in each setting | `write_switch_log()`, `time_in_settings()` | writes / reads `*_switches.csv` (`event, seconds, settings, write_share, reads, writes, reason`) | locustfile, analyze_results, signals_report, tests |
+
+#### Test bed — `benchmark/` and Docker
+
+| File | Lines | What it does | Main contents | Reads / writes | Used by |
+|---|---|---|---|---|---|
+| `netem.py` | 88 | Equal one-way delay between the nodes with `tc netem`; `clear()` removes every delay including the topology's ingress shaping | `NODES`, `IFACE`, `IFB`, `LATENCY_LEVELS_MS`, `LATENCY_LABELS`, `apply_latency()`, `clear()`, `measure_rtt_ms()`, `_exec()`, `_ip()` | `docker exec` / `docker inspect` on mongo1–3 | topology, run_benchmark, staleness_test, signals_check, tests |
+| `topology.py` | 201 | Unequal distances (#1): per-destination delays between nodes, and both directions of each node's link to the client (replies on egress, requests through an `ifb` device) | `Topology`, `T1`, `T2`, `equal()`, `by_name()`, `plan_commands()` (pure), `apply()`, `clear()`, `applied()`, `host_ip()`, `measure_client_rtts()`, `main()` | `docker exec` (tc, ip link) and `docker inspect`; direct pymongo pings to each node | run_benchmark, signals_eval, signals_check, tests |
+| `cluster.py` | 95 | Pins the primary (#12): mongo1 gets election priority 10, chained replication is turned off, then it waits until mongo1 is primary and both secondaries copy straight from it | `pin_primary()`, `node_states()`, `sync_sources()`, `wait_until()` | `replSetGetStatus`, `replSetGetConfig`, `replSetReconfig` | run_benchmark, signals_eval, signals_check |
+| `docker-compose.yml` | – | Three services `mongo1:27017`, `mongo2:27018`, `mongo3:27019` in replica set `rs0`, with named volumes, one bridge network and `NET_ADMIN` | – | – | the whole test bed |
+| `docker/mongo/Dockerfile` | – | `mongo:7.0` plus `iproute2` (`tc`, `ifb`) and `iputils-ping` | – | – | docker-compose |
+
+#### Entry points
+
+| File | What it does | Reads / writes |
+|---|---|---|
+| `signals_evaluation.ipynb` | The full evaluation in one notebook: settings (profiles `FULL`, `FULL_ALL`, `SMOKE`, `CUSTOM`; `RUN_TAG` to resume), plan and estimate, preflight, live checks, load tests, staleness, results tables and figures, stored record. The committed copy contains the outputs of run `FULL_2026-10-19_1452` | everything `signals_eval.py` writes |
+| `experiments.ipynb` | The equal-latency sweep notebook from `main` (traffic rule; static fast / moderate / safe and adaptive) | `results/write_share_eval/` |
+| `demo_app.py` (150 lines) | Scripted console demo: read-heavy phase → FAST, write burst → SAFE, mixed → MODERATE, printing stats and settings after each phase | MongoDB db `demo`, collection `live_demo` |
+
+#### Tests — `tests/` (112 tests)
+
+| File | Tests | What it checks |
+|---|---|---|
+| `test_decision.py` | 22 | Every branch of the traffic rule, exact-threshold boundaries, independence from the absolute write rate, threshold validation |
+| `test_rules.py` | 15 | Reasons, hysteresis in both directions, non-overlapping bands, the latency budget (over, within, unmeasured, never touching FAST/MODERATE), policy floor/ceiling and its precedence over the budget |
+| `test_monitor.py` | 9 | Window counts, infinite read/write ratio, pruning, validation |
+| `test_feedback.py` | 10 | Tick orchestration with a fake clock, client and monitor: first switch, cooldown, unchanged decisions, several collections, switch log. Its fakes are reused by other tests |
+| `test_signals_plumbing.py` | 15 | p95 per settings name and ageing out; budget back-off, minimum samples and cooldown; policy at start-up; reasons in a traffic-only loop; the client's key memory, redirect counting and failed-write logging; `native_lock`; topology command plans (T1, equal, names) |
+| `test_signals_eval.py` | 9 | The default plan and its time estimate, all 10 presets still available, resume markers, expectations on matching and contradicting results, integrity checks, the watchdog killing a hung parent + child process, one retry then a recorded failure |
+| `test_run_benchmark.py` | 10 | Run lengths and scaling, result folder layout, configurations and presets, every combination run and delays always cleared, switch-log paths only for adaptive modes |
+| `test_analyze_results.py` | 11 | Analysis on synthetic result trees: repeats, mean and std, staleness pooling, switch timelines, figures written, filters, missing rows, probe pooling |
+| `test_switch_log.py` | 3 | Settings names, time in settings adds up to the run length, a run with no switches |
+| `test_probe_log.py` | 3 | Probe tally per setting, an empty file, the Locust probe path end to end with a fake client |
+| `test_client_smoke.py` | 4 (live) | Against the real replica set: SAFE write then read, monitor wiring, two collections with different settings, the MODERATE default |
+| `test_feedback_integration.py` | 1 (live) | The real loop on the real replica set escalates to SAFE on a write burst and relaxes to FAST on reads |
+| `_locustfile_probe_check.py` | helper | Fake client used by `test_probe_log.py` to drive the Locust probe code without a database |
+| `__init__.py` | – | Marks the package |
+
+#### Documentation, results and project files
+
+| File | What it is |
+|---|---|
+| `README.md` | Pitch, quickstart, links to the docs |
+| `docs/FINAL_REPORT.md` | This report |
+| `docs/SIGNAL_RULES.md` | The eight additions in detail, with parameters and live results |
+| `docs/PROJECT_DOCUMENTATION.md` | Architecture, data flow and file reference |
+| `docs/SHOWCASE.md` | Runbook for a live demo |
+| `docs/replica_set_setup.md` | One-time replica-set setup (hosts file, `rs.initiate`) |
+| `docs/demo_runs/demo_run_2026-09-10.log` | Saved transcript of a `demo_app.py` run |
+| `docs/results/signals/FULL_2026-10-19_1452/data/` | The run's tables: `summary.csv`, `staleness*.csv`, `expectations.csv`, `checks.json`, `preflight.json`, `run_meta.json`, `run_log.txt`, and for each of `topology_EQUAL-0ms`, `topology_T1`, `topology_T2` the per-run Locust stats, probe, switch and client files (78 files each) |
+| `docs/results/signals/FULL_2026-10-19_1452/figs/` | The five charts used in Section 7 |
+| `plan/exec_plan.md` | The original phase-by-phase build plan |
+| `requirements.txt` | `pymongo`, `pytest`, `pandas`, `matplotlib`, `locust`, `ipykernel`, `nbclient` |
+| `.gitignore` | Caches, the virtual environment, raw `results/` output |
+| `results/.gitkeep` | Keeps the otherwise ignored `results/` folder in git |
 
 ---
 
