@@ -39,14 +39,20 @@ sys.path.insert(0, str(REPO_ROOT))  # so `python benchmark/analyze_results.py` c
 from benchmark.probe_log import read_probe_csv  # noqa: E402
 from benchmark.switch_log import time_in_settings  # noqa: E402
 
-CONFIGS = ["static_fast", "static_safe", "adaptive"]
-PRESETS = [
-    "READ_HEAVY", "WRITE_HEAVY", "MIXED_BURSTY",
-    "BALANCED", "HOTSPOT", "RAMP", "SPIKE", "HIGH_CONCURRENCY", "MODEST_WRITES",
-]
+from benchmark.run_benchmark import CONFIGS, PRESETS  # noqa: E402 - one list for runner and analysis
 
-CONFIG_COLORS = {"static_fast": "#e07b39", "static_safe": "#3b6ea5", "adaptive": "#2ea043"}
-CONFIG_LABELS = {"static_fast": "Static Fast (w=1)", "static_safe": "Static Safe (w=majority)", "adaptive": "Adaptive"}
+CONFIG_COLORS = {"static_fast": "#e07b39", "static_moderate": "#8e6bbf", "static_safe": "#3b6ea5",
+                 "adaptive": "#2ea043", "adaptive_signals": "#0f7b6c"}
+CONFIG_LABELS = {"static_fast": "Static Fast (w=1)", "static_moderate": "Static Moderate (w=1, primary)",
+                 "static_safe": "Static Safe (w=majority)", "adaptive": "Adaptive",
+                 "adaptive_signals": "Adaptive + signals"}
+
+
+def split_config(base):
+    """("adaptive_signals", "READ_HEAVY") from "adaptive_signals_READ_HEAVY": the longest
+    config name that prefixes it wins, so adaptive_signals is never read as adaptive."""
+    config = max((c for c in CONFIGS if base.startswith(c + "_")), key=len, default=None)
+    return (config, base[len(config) + 1:]) if config else (None, None)
 
 
 def load_benchmark_summary(results_dir=RESULTS_DIR, verbose=True):
@@ -150,12 +156,14 @@ def make_staleness_chart(df, out_path):
     if df.empty:
         print("  (skip) staleness chart: no staleness data")
         return
-    order = ["static_fast", "static_safe", "adaptive_hot", "adaptive_cold"]
+    order = ["static_fast", "static_moderate", "static_safe", "adaptive_hot", "adaptive_cold"]
     df = df.set_index("config").reindex([c for c in order if c in df["config"].tolist() or c in df.index]).reset_index() \
         if "config" in df.columns else df
     labels = [c for c in order if c in df["config"].values]
     values = [df[df["config"] == c]["stale_rate"].iloc[0] * 100 for c in labels]
-    colors = ["#e07b39", "#3b6ea5", "#c0392b", "#2ea043"][: len(labels)]
+    palette = {"static_fast": "#e07b39", "static_moderate": "#8e6bbf", "static_safe": "#3b6ea5",
+               "adaptive_hot": "#c0392b", "adaptive_cold": "#2ea043"}
+    colors = [palette[c] for c in labels]
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
     bars = ax.bar([l.replace("_", " ").title() for l in labels], values, color=colors)
@@ -234,8 +242,10 @@ SETTING_COLORS = {"FAST": "#e07b39", "MODERATE": "#9aa0a6", "SAFE": "#3b6ea5"}
 # series gets its own marker and line style plus a small horizontal offset.
 SERIES_STYLE = {
     "static_fast": ("o", "-", -0.6),
+    "static_moderate": ("D", "-", -0.3),
     "static_safe": ("s", "--", 0.0),
     "adaptive": ("^", ":", 0.6),
+    "adaptive_signals": ("P", "-.", 0.9),
     "adaptive_hot": ("^", ":", 0.6),
     "adaptive_cold": ("v", "-.", 1.2),
 }
@@ -308,12 +318,14 @@ def load_switch_timelines(root=EVAL_DIR, levels=None, max_rep=None):
     per (latency, repeat, preset), from the <config>_<preset>_switches.csv files."""
     rows = []
     for latency_ms, rep, d in rep_dirs(root, levels, max_rep):
-        for path in sorted(d.glob("adaptive_*_switches.csv")):
-            preset = path.name[len("adaptive_"):-len("_switches.csv")]
+        for path in sorted(d.glob("adaptive*_switches.csv")):
+            config, preset = split_config(path.name[: -len("_switches.csv")])
+            if config is None:
+                continue
             t = time_in_settings(path)
             total = sum(t[n] for n in ("FAST", "MODERATE", "SAFE")) or 1.0
             rows.append({
-                "latency_ms": latency_ms, "rep": rep, "preset": preset, "switches": t["switches"],
+                "latency_ms": latency_ms, "rep": rep, "config": config, "preset": preset, "switches": t["switches"],
                 **{f"{n}_pct": 100.0 * t[n] / total for n in ("FAST", "MODERATE", "SAFE")},
             })
     return pd.DataFrame(rows)
@@ -326,12 +338,12 @@ def load_probes(root=EVAL_DIR, levels=None, max_rep=None):
     for latency_ms, rep, d in rep_dirs(root, levels, max_rep):
         for path in sorted(d.glob("*_probe.csv")):
             base = path.name[: -len("_probe.csv")]
-            config = next((c for c in CONFIGS if base.startswith(c + "_")), None)
+            config, preset = split_config(base)
             if config is None:
                 continue
             for settings, (probes, stale) in read_probe_csv(path).items():
                 rows.append({"latency_ms": latency_ms, "rep": rep, "config": config,
-                             "preset": base[len(config) + 1:], "settings": settings,
+                             "preset": preset, "settings": settings,
                              "probes": probes, "stale": stale})
     return pd.DataFrame(rows)
 
@@ -360,6 +372,8 @@ def aggregate_timelines(tl):
     if tl.empty:
         return pd.DataFrame()
     cols = ["FAST_pct", "MODERATE_pct", "SAFE_pct", "switches"]
+    if "config" in tl.columns:  # the latency-sweep charts describe the traffic-rule layer
+        tl = tl[tl["config"] == "adaptive"]
     return tl.groupby(["latency_ms", "preset"])[cols].mean().reset_index()
 
 
@@ -406,7 +420,7 @@ def make_staleness_sweep_chart(df, out_path):
         print("  (skip) staleness sweep chart: no staleness data")
         return
     fig, ax = plt.subplots(figsize=(7.5, 4.5))
-    colors = {"static_fast": "#e07b39", "static_safe": "#3b6ea5", "adaptive_hot": "#c0392b", "adaptive_cold": "#2ea043"}
+    colors = {"static_fast": "#e07b39", "static_moderate": "#8e6bbf", "static_safe": "#3b6ea5", "adaptive_hot": "#c0392b", "adaptive_cold": "#2ea043"}
     for config, color in colors.items():
         sub = df[df["config"] == config].sort_values("latency_ms")
         if sub.empty:

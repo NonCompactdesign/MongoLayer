@@ -13,6 +13,8 @@ results/*.csv
 results/*.png
 results/latency_*/
 results/write_share_eval/
+results/signals_eval/
+results/final_eval/
 
 # OS cruft
 .DS_Store

@@ -1,0 +1,8 @@
+event,seconds,settings,write_share,reads,writes,reason
+start,0.0,MODERATE,,,,client default
+switch,5.004,SAFE,0.4126,595,418,write share 0.41 > 0.40
+switch,15.005,MODERATE,0.1658,2933,583,write share 0.17 between 0.15 and 0.40
+switch,85.049,SAFE,0.499,1911,1903,write share 0.50 > 0.40
+switch,95.06,MODERATE,0.776,755,2616,write share 0.78 > 0.35 (hysteresis: staying SAFE); SAFE write p95 322 ms > budget 100 ms -> MODERATE
+switch,175.12,SAFE,0.5029,1902,1924,write share 0.50 > 0.40
+stop,178.375,SAFE,,,,

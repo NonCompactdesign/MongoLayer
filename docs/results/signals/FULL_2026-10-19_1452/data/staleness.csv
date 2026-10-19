@@ -1,0 +1,16 @@
+setup,config,trials,hits,misses,stale_rate,in_expected_settings,stale_pct
+EQUAL-0ms,static_fast,200,185,15,0.075,200,7.5
+EQUAL-0ms,static_moderate,200,200,0,0.0,200,0.0
+EQUAL-0ms,static_safe,200,200,0,0.0,200,0.0
+EQUAL-0ms,adaptive_hot,200,200,0,0.0,200,0.0
+EQUAL-0ms,adaptive_cold,60,60,0,0.0,60,0.0
+T1,static_fast,200,107,93,0.465,200,46.5
+T1,static_moderate,200,200,0,0.0,200,0.0
+T1,static_safe,200,200,0,0.0,200,0.0
+T1,adaptive_hot,200,200,0,0.0,200,0.0
+T1,adaptive_cold,60,40,20,0.3333333333333333,60,33.3
+T2,static_fast,200,197,3,0.015,200,1.5
+T2,static_moderate,200,200,0,0.0,200,0.0
+T2,static_safe,200,200,0,0.0,200,0.0
+T2,adaptive_hot,200,200,0,0.0,200,0.0
+T2,adaptive_cold,60,60,0,0.0,60,0.0

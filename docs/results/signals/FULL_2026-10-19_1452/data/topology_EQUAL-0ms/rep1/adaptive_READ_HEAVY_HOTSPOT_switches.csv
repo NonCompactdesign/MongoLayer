@@ -1,0 +1,4 @@
+event,seconds,settings,write_share,reads,writes,reason
+start,0.0,MODERATE,,,,client default
+switch,5.007,FAST,0.0667,994,71,write share 0.07 < 0.15
+stop,179.271,FAST,,,,

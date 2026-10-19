@@ -8,8 +8,10 @@ read for it (whatever read preference the config's active settings specify),
 and check whether the read actually returned that marker. A "miss" means
 the read landed on a replica that hadn't caught up yet.
 
-Four scenarios measured:
+Five scenarios measured:
   static_fast    - FAST_SETTINGS permanently active, no adaptation
+  static_moderate - MODERATE_SETTINGS permanently active (w=1, primary reads): the
+                   cheapest setting that never reads from a secondary
   static_safe    - SAFE_SETTINGS permanently active, no adaptation
   adaptive_hot   - real FeedbackLoop, warmed into its SAFE_SETTINGS branch
                    (write-heavy: high write share) before measuring
@@ -37,7 +39,7 @@ results/write_share_eval/latency_<N>ms/rep<k>/staleness.csv.
 Usage:
     python -m benchmark.staleness_test
     python -m benchmark.staleness_test --quick          # smaller trial counts, 1 repeat
-    python -m benchmark.staleness_test --latency 0 43   # only these one-way delays (ms)
+    python -m benchmark.staleness_test --latency 0 5    # only these one-way delays (ms)
     python -m benchmark.staleness_test --repeats 3      # default
 """
 
@@ -50,7 +52,7 @@ from pathlib import Path
 from adaptive_layer.client import AdaptiveClient
 from benchmark import netem
 from benchmark.run_benchmark import results_dir_for
-from adaptive_layer.decision import FAST_SETTINGS, SAFE_SETTINGS
+from adaptive_layer.decision import FAST_SETTINGS, MODERATE_SETTINGS, SAFE_SETTINGS
 from adaptive_layer.feedback import FeedbackLoop
 from adaptive_layer.monitor import AccessPatternMonitor
 
@@ -179,6 +181,7 @@ def run_all(trials):
     """The four staleness scenarios at whatever latency is currently injected."""
     results = [
         measure_static("static_fast", FAST_SETTINGS, "staleness_static_fast", trials),
+        measure_static("static_moderate", MODERATE_SETTINGS, "staleness_static_moderate", trials),
         measure_static("static_safe", SAFE_SETTINGS, "staleness_static_safe", trials),
         measure_adaptive_hot("staleness_adaptive_hot", trials),
         # adaptive_cold is paced (COLD_TRIAL_SPACING_SECONDS per trial) - use fewer

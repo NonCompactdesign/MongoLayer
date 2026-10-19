@@ -1,0 +1,16 @@
+kind,item,verdict,detail
+integrity,every planned load-test run finished,True,90/90
+integrity,no Locust errors or hung runs,True,none
+integrity,no run needed a retry,True,none
+integrity,no failed requests,True,0 failed requests in total
+integrity,every run has staleness probes,True,all runs probed
+integrity,live checks all PASS,True,5/5 PASS
+integrity,staleness experiment done for every setup,True,all done
+expectation,"adaptive_signals: no stale probe while in FAST, in any setup (#6)",True,0 stale of 5938 probes taken in FAST
+expectation,T1 READ_HEAVY: adaptive_signals uses FAST most of the run,True,FAST 97% of the run
+expectation,T1 READ_HEAVY: adaptive_signals is less stale than adaptive and static_fast,True,stale 0.0% vs adaptive 24.6% / static_fast 34.5%
+expectation,T1 READ_HEAVY: adaptive_signals reads stay local (median < 20 ms),True,read p50 3 ms (static_moderate reads the 87 ms primary)
+expectation,T1 BALANCED: the latency budget takes adaptive_signals out of SAFE,True,"switch reasons: traffic x3, budget+hysteresis x2"
+expectation,"T2 BALANCED: SAFE is within budget, adaptive_signals stays mostly SAFE",True,"SAFE 97% of the run, write p95 48 ms"
+expectation,"EQUAL-0ms BALANCED: SAFE is within budget, adaptive_signals stays mostly SAFE",True,"SAFE 97% of the run, write p95 40 ms"
+expectation,static_moderate and static_safe are never stale,True,0 stale probes

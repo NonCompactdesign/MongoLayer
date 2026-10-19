@@ -69,29 +69,42 @@ Skip this section if you've already run this project on this machine before.
    ```bash
    python -m pytest tests/ -q
    ```
-   Should print `34 passed`. If it doesn't, fix that before the showcase — don't discover a broken build live.
+   Should print `112 passed` (some of them use the live replica set). If it doesn't, fix that before the showcase — don't discover a broken build live.
+
+6. **Pin the primary** (mongo1 primary, secondaries replicating straight from it). Every command in Section 2 also does this itself, but running it once up front shows the set is healthy:
+   ```bash
+   python -m benchmark.cluster
+   ```
 
 ---
 
-## 2. The main event: the live dashboard (recommended for a showcase/presentation)
+## 2. The main event: the additions, live
+
+The web dashboard was removed from `main` (it will be rebuilt last). The live centrepiece is the
+check script: five short scenarios, each showing one addition at work on the real replica set,
+with the reason the layer gave.
 
 ```bash
-python -m dashboard.app
+python -m benchmark.signals_check          # all five, about 2 minutes
+python -m benchmark.signals_check C2 C5    # or pick the ones you want to show
 ```
 
-Then open **http://localhost:8080**. This is a purpose-built live dashboard for exactly this project — nothing off-the-shelf shows an app's own consistency-tuning logic alongside the replica set's real behavior, so it's custom. It has:
+| Scenario | What happens on screen | The point to make |
+|---|---|---|
+| **C1** distances | topology T1 measured: client ~1 ms from mongo2, ~87 ms from the primary mongo1 and from mongo3 | the test bed can put a replica next to the client (#1, #12) |
+| **C2** own writes | 100 write-then-read trials on T1: plain FAST ~30-50 of 100 stale; with per-key routing **0** stale while other reads stay ~2 ms | read-your-own-writes without giving up FAST for everyone (#6) |
+| **C3** policy | read-heavy traffic on a `floor="SAFE"` collection stays SAFE | the application has the final word (#5) |
+| **C4** budget | write-heavy on T1: SAFE p95 ~264 ms > 100 ms budget → MODERATE | SAFE has a price, and the layer can see it (#9) |
+| **C5** hysteresis | after SAFE, traffic drops to 37.5% writes: the traffic rule alone goes to MODERATE, with hysteresis it stays SAFE | no flip-flopping on a threshold (#8) |
 
-- **Traffic controls** — a read:write ratio slider, a rate slider, Start/Stop, and three one-click presets (Read-Heavy, Write-Heavy, Balanced). Adjust these live and watch the system react in real time — no scripted phases, no waiting for a fixed sequence.
-- **Active Consistency Settings** — the three live settings, with a blue flash the instant any of them changes (so a viewer's eye is drawn to it automatically), plus a plain-English label ("SAFE — hot/write-heavy pattern detected" etc.).
-- **Access Pattern Monitor** — live read/write counts and two threshold bars (write frequency vs. `HIGH_WRITE_THRESHOLD`, read:write ratio vs. `READ_HEAVY_RATIO_THRESHOLD`) so a viewer can see *how close* the system is to switching, not just the switch itself.
-- **Replica Set — Live Container Status** — all three containers, live role badges (PRIMARY/SECONDARY, tracks re-elections automatically), and each node's own insert/query/getmore counters ticking up in real time. This is the part that visibly proves writes land on the primary and reads get routed per the active read preference.
-- **Live Operation Feed** — a scrolling log of the most recent ops.
+Each scenario prints its JSON result, including the switch reasons (#10), and PASS/FAIL. All
+results are also written to `results/signals_eval/checks.json`.
 
-**Reset Stats button** — MongoDB has no native "reset counters" command (`serverStatus().opcounters` is cumulative since the mongod process started). This button re-baselines the displayed per-node counters and the traffic op count back to 0 without restarting anything — safe to click right before a demo starts, or between runs, with no risk of disrupting the replica set or forcing a new primary election. It does **not** touch active settings or the Monitor's real observed pattern — those reflect actual system state, not just a display convenience.
-
-**What to say while it's running:** drag the ratio slider toward Write and watch `write_freq` climb the threshold bar and the settings flash to SAFE; drag it back toward Read and hold it there (the FAST branch needs a *sustained* low-write, read-heavy pattern, not just an instant flip) and watch it relax to FAST. Point at the container panel and note that reads only start reaching the secondaries once the read preference actually allows it — under SAFE settings (`read_preference=primary`), the secondary query counters visibly stop moving.
-
-Updates every second via polling — nothing to configure, just refresh the page if it ever shows "connection lost."
+To show the distances themselves:
+```bash
+python -m benchmark.topology T1      # prints client round trips: mongo2 ~1 ms, mongo1/mongo3 ~87 ms
+python -m benchmark.topology clear
+```
 
 ---
 
@@ -117,17 +130,24 @@ A saved transcript of a clean run is at [`demo_runs/demo_run_2026-09-10.log`](de
 
 ## 4. Supporting evidence (if there's time / it's asked for)
 
-**Benchmark comparison** (adaptive vs. the two static baselines, across three workload shapes):
-```bash
-python benchmark/run_benchmark.py --quick
+**The full evaluation** (about 4 h 35 min; run it the night before, not live): open `signals_evaluation.ipynb` and Run All, or run it headless:
+```powershell
+.venv\Scripts\python -m benchmark.run_notebook signals_evaluation.ipynb
 ```
-Takes about 2 minutes (`--quick` = 5 users/20s per combination; drop the flag for the full 20-user/60s version used for the real DA-III numbers, which takes ~10+ minutes). Prints a summary table; raw per-request-type stats land in `results/*.csv`.
+Its results section (integrity, expectations, tables, figures) is what to show afterwards. The write-up of the 19 Oct 2026 run, with the journey, every addition and the analysis, is [`FINAL_REPORT.md`](FINAL_REPORT.md).
+
+**Benchmark comparison** (five configurations: static FAST / MODERATE / SAFE, adaptive, adaptive with the additions):
+```bash
+python -m benchmark.run_benchmark --topology T1 --presets READ_HEAVY BALANCED --duration 60s --repeats 1
+python -m benchmark.signals_report
+```
+About 1 minute per (configuration × preset), so ~11 minutes for this example. `signals_report` prints the summary table (latency, stale probes, time in each setting, switch reasons). The equal-distance latency sweep is still `python -m benchmark.run_benchmark --quick`. The full evaluation notebook stores its tables and figures in `docs/results/signals/<tag>/`.
 
 **Staleness measurement** (the read-after-write correctness tradeoff, not just speed):
 ```bash
 python -m benchmark.staleness_test --quick
 ```
-Note the `python -m benchmark.staleness_test` form (not `python benchmark/staleness_test.py`) — running it as a script directly breaks the internal package imports. Prints a stale-read rate for four scenarios (static fast/safe, adaptive under hot and cold conditions) and — the interesting part — explains *why* the adaptive layer's "fast" setting is actually safer in practice than the static fast baseline, not just faster. Worth reading that explanation out loud if asked "so what does this actually prove."
+Note the `python -m benchmark.staleness_test` form (not `python benchmark/staleness_test.py`) — running it as a script directly breaks the internal package imports. Prints a stale-read rate for five scenarios (static fast/moderate/safe, adaptive under hot and cold conditions) and — the interesting part — explains *why* the adaptive layer's "fast" setting is actually safer in practice than the static fast baseline, not just faster. Worth reading that explanation out loud if asked "so what does this actually prove."
 
 ---
 
@@ -147,7 +167,6 @@ docker compose down -v    # stop AND wipe data (only if you want a truly clean s
 | `failed to connect to the docker API` | Docker Desktop isn't running — start it, wait ~30–60s |
 | `mongosh` command says `MongoServerError: not primary` | The replica set re-elected primary onto a different node (normal, happens after restarts) — retry the same command against `mongo2` or `mongo3` |
 | `pymongo.errors.ServerSelectionTimeoutError` from Python | Usually means the hosts file entries (`mongo1`/`mongo2`/`mongo3` → `127.0.0.1`) are missing — see Section 0, step 2 |
-| `ModuleNotFoundError: No module named 'adaptive_layer'` | You ran a `benchmark/`/`dashboard/` script directly instead of as a module — use `python -m dashboard.app` / `python -m benchmark.staleness_test`, not `python dashboard/app.py` |
-| Dashboard shows "connection lost" | The Flask server crashed or was stopped — check the terminal it's running in for a traceback; a common cause is the replica set going down mid-demo, so check `docker ps` too |
-| Dashboard settings never leave MODERATE | Give it a few seconds — the Feedback Loop only re-evaluates every `interval_seconds` (3s by default in the dashboard), and won't switch again within `cooldown_seconds` (5s) of its last switch. The threshold bars tell you how close it is. |
+| `ModuleNotFoundError: No module named 'adaptive_layer'` / `'benchmark'` | You ran a `benchmark/` script directly instead of as a module — use `python -m benchmark.run_benchmark` / `python -m benchmark.signals_check`, not `python benchmark/run_benchmark.py` |
+| A node still has injected delay after an interrupted run | `python -m benchmark.topology clear` |
 | Demo/benchmark leaves test data behind | Harmless — everything writes to its own throwaway collection/database and cleans up after itself in normal completion; if a run was killed mid-way, `docker exec mongo1 mongosh --port 27017 --eval 'db.getSiblingDB("<db_name>").dropDatabase()'` clears it (try `mongo2`/`mongo3` if you get "not primary") |

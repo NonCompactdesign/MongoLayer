@@ -1,0 +1,91 @@
+topology,rep,config,preset,requests,failures,read_p50,read_p95,write_p50,write_p95,probes,stale,stale_pct,FAST_probes,FAST_stale,MODERATE_probes,MODERATE_stale,SAFE_probes,SAFE_stale,FAST_pct,MODERATE_pct,SAFE_pct,switches,reasons,redirected_reads,setup
+EQUAL-0ms,rep1,static_fast,READ_HEAVY,45307,0,13.0,27.0,15.0,28.0,907,0,0.0,907,0,0,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_fast,MIXED_BURSTY,45305,0,15.0,29.0,22.0,42.0,909,0,0.0,909,0,0,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_fast,BALANCED,45264,0,24.0,41.0,24.0,41.0,865,1,0.1,865,1,0,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_fast,SPIKE,27036,0,15.0,27.0,21.0,39.0,537,0,0.0,537,0,0,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_fast,MODEST_WRITES,45298,0,20.0,36.0,21.0,36.0,903,1,0.1,903,1,0,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_fast,READ_HEAVY_HOTSPOT,45344,0,17.0,30.0,18.0,31.0,945,0,0.0,945,0,0,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_moderate,READ_HEAVY,45302,0,15.0,26.0,17.0,27.0,905,0,0.0,0,0,905,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_moderate,MIXED_BURSTY,45334,0,15.0,27.0,22.0,41.0,887,0,0.0,0,0,887,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_moderate,BALANCED,45385,0,22.0,41.0,22.0,41.0,939,0,0.0,0,0,939,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_moderate,SPIKE,27029,0,16.0,28.0,20.0,41.0,530,0,0.0,0,0,530,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_moderate,MODEST_WRITES,45291,0,21.0,36.0,21.0,37.0,893,0,0.0,0,0,893,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_moderate,READ_HEAVY_HOTSPOT,45293,0,16.0,27.0,17.0,28.0,898,0,0.0,0,0,898,0,0,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_safe,READ_HEAVY,45297,0,14.0,25.0,17.0,27.0,902,0,0.0,0,0,0,0,902,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_safe,MIXED_BURSTY,45414,0,9.0,19.0,16.0,32.0,864,0,0.0,0,0,0,0,864,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_safe,BALANCED,45199,0,21.0,38.0,24.0,39.0,856,0,0.0,0,0,0,0,856,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_safe,SPIKE,27068,0,12.0,23.0,21.0,39.0,555,0,0.0,0,0,0,0,555,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_safe,MODEST_WRITES,45331,0,19.0,34.0,22.0,35.0,937,0,0.0,0,0,0,0,937,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,static_safe,READ_HEAVY_HOTSPOT,45177,0,15.0,27.0,18.0,29.0,784,0,0.0,0,0,0,0,784,0,,,,,,,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive,READ_HEAVY,45250,0,15.0,28.0,17.0,29.0,855,0,0.0,833,0,22,0,0,0,97.0,3.0,0.0,1.0,traffic x1,,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive,MIXED_BURSTY,45294,0,15.0,28.0,23.0,40.0,896,0,0.0,0,0,265,0,631,0,0.0,31.0,69.0,11.0,traffic x11,,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive,BALANCED,45275,0,15.0,36.0,19.0,38.0,877,0,0.0,0,0,20,0,857,0,0.0,3.0,97.0,1.0,traffic x1,,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive,SPIKE,27059,0,16.0,28.0,21.0,40.0,510,0,0.0,230,0,280,0,0,0,47.0,53.0,0.0,10.0,traffic x10,,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive,MODEST_WRITES,45290,0,19.0,32.0,19.0,33.0,893,0,0.0,0,0,893,0,0,0,0.0,100.0,0.0,0.0,,,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive,READ_HEAVY_HOTSPOT,45285,0,16.0,28.0,18.0,29.0,892,0,0.0,877,0,15,0,0,0,97.0,3.0,0.0,1.0,traffic x1,,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive_signals,READ_HEAVY,45339,0,13.0,26.0,16.0,27.0,892,0,0.0,874,0,18,0,0,0,97.0,3.0,0.0,1.0,traffic x1,4240.0,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive_signals,MIXED_BURSTY,45259,0,16.0,28.0,24.0,41.0,842,0,0.0,0,0,255,0,587,0,0.0,31.0,69.0,11.0,traffic x11,0.0,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive_signals,BALANCED,45275,0,21.0,37.0,24.0,40.0,880,0,0.0,0,0,21,0,859,0,0.0,3.0,97.0,1.0,traffic x1,0.0,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive_signals,SPIKE,27025,0,16.0,27.0,21.0,41.0,529,0,0.0,237,0,292,0,0,0,47.0,53.0,0.0,10.0,traffic x10,2703.0,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive_signals,MODEST_WRITES,45400,0,21.0,36.0,21.0,37.0,956,0,0.0,0,0,956,0,0,0,0.0,100.0,0.0,0.0,,0.0,EQUAL-0ms
+EQUAL-0ms,rep1,adaptive_signals,READ_HEAVY_HOTSPOT,45300,0,14.0,26.0,16.0,27.0,903,0,0.0,888,0,15,0,0,0,97.0,3.0,0.0,1.0,traffic x1,25910.0,EQUAL-0ms
+T1,rep1,static_fast,READ_HEAVY,45182,0,8.0,16.0,88.0,91.0,832,287,34.5,832,287,0,0,0,0,,,,,,,T1
+T1,rep1,static_fast,MIXED_BURSTY,45100,0,2.0,6.0,88.0,92.0,899,193,21.5,899,193,0,0,0,0,,,,,,,T1
+T1,rep1,static_fast,BALANCED,45171,0,4.0,11.0,88.0,92.0,910,204,22.4,910,204,0,0,0,0,,,,,,,T1
+T1,rep1,static_fast,SPIKE,26617,0,2.0,4.0,88.0,120.0,526,101,19.2,526,101,0,0,0,0,,,,,,,T1
+T1,rep1,static_fast,MODEST_WRITES,45123,0,5.0,13.0,88.0,92.0,848,207,24.4,848,207,0,0,0,0,,,,,,,T1
+T1,rep1,static_fast,READ_HEAVY_HOTSPOT,45211,0,10.0,18.0,88.0,91.0,862,219,25.4,862,219,0,0,0,0,,,,,,,T1
+T1,rep1,static_moderate,READ_HEAVY,45164,0,88.0,91.0,88.0,92.0,860,0,0.0,0,0,860,0,0,0,,,,,,,T1
+T1,rep1,static_moderate,MIXED_BURSTY,44997,0,88.0,91.0,88.0,92.0,838,0,0.0,0,0,838,0,0,0,,,,,,,T1
+T1,rep1,static_moderate,BALANCED,45154,0,88.0,90.0,88.0,91.0,857,0,0.0,0,0,857,0,0,0,,,,,,,T1
+T1,rep1,static_moderate,SPIKE,26823,0,88.0,91.0,88.0,93.0,524,0,0.0,0,0,524,0,0,0,,,,,,,T1
+T1,rep1,static_moderate,MODEST_WRITES,45027,0,88.0,92.0,88.0,92.0,869,0,0.0,0,0,869,0,0,0,,,,,,,T1
+T1,rep1,static_moderate,READ_HEAVY_HOTSPOT,45043,0,88.0,92.0,88.0,92.0,904,0,0.0,0,0,904,0,0,0,,,,,,,T1
+T1,rep1,static_safe,READ_HEAVY,44201,0,88.0,90.0,230.0,260.0,878,0,0.0,0,0,0,0,878,0,,,,,,,T1
+T1,rep1,static_safe,MIXED_BURSTY,39997,0,88.0,92.0,260.0,270.0,765,0,0.0,0,0,0,0,765,0,,,,,,,T1
+T1,rep1,static_safe,BALANCED,40517,0,89.0,94.0,240.0,260.0,834,0,0.0,0,0,0,0,834,0,,,,,,,T1
+T1,rep1,static_safe,SPIKE,25309,0,88.0,91.0,250.0,270.0,478,0,0.0,0,0,0,0,478,0,,,,,,,T1
+T1,rep1,static_safe,MODEST_WRITES,42848,0,88.0,91.0,230.0,260.0,874,0,0.0,0,0,0,0,874,0,,,,,,,T1
+T1,rep1,static_safe,READ_HEAVY_HOTSPOT,44332,0,88.0,91.0,220.0,260.0,863,0,0.0,0,0,0,0,863,0,,,,,,,T1
+T1,rep1,adaptive,READ_HEAVY,45228,0,2.0,7.0,88.0,91.0,934,230,24.6,913,230,21,0,0,0,97.0,3.0,0.0,1.0,traffic x1,,T1
+T1,rep1,adaptive,MIXED_BURSTY,43461,0,88.0,91.0,88.0,260.0,854,5,0.6,0,0,445,0,409,5,0.0,49.0,51.0,12.0,traffic x12,,T1
+T1,rep1,adaptive,BALANCED,40796,0,89.0,94.0,240.0,260.0,819,1,0.1,0,0,18,0,801,1,0.0,3.0,97.0,1.0,traffic x1,,T1
+T1,rep1,adaptive,SPIKE,26811,0,87.0,90.0,88.0,91.0,523,57,10.9,268,57,255,0,0,0,52.0,48.0,0.0,10.0,traffic x10,,T1
+T1,rep1,adaptive,MODEST_WRITES,45157,0,88.0,91.0,88.0,91.0,857,0,0.0,0,0,857,0,0,0,0.0,100.0,0.0,0.0,,,T1
+T1,rep1,adaptive,READ_HEAVY_HOTSPOT,45171,0,2.0,7.0,88.0,93.0,848,225,26.5,833,225,15,0,0,0,97.0,3.0,0.0,1.0,traffic x1,,T1
+T1,rep1,adaptive_signals,READ_HEAVY,45073,0,3.0,88.0,88.0,93.0,824,0,0.0,798,0,26,0,0,0,97.0,3.0,0.0,1.0,traffic x1,3947.0,T1
+T1,rep1,adaptive_signals,MIXED_BURSTY,44353,0,88.0,91.0,88.0,260.0,842,1,0.1,0,0,743,0,99,1,0.0,87.0,13.0,5.0,"traffic x4, budget+hysteresis x1",0.0,T1
+T1,rep1,adaptive_signals,BALANCED,44456,0,88.0,92.0,89.0,260.0,893,0,0.0,0,0,790,0,103,0,0.0,87.0,13.0,5.0,"traffic x3, budget+hysteresis x2",0.0,T1
+T1,rep1,adaptive_signals,SPIKE,26877,0,87.0,90.0,88.0,91.0,572,0,0.0,297,0,275,0,0,0,52.0,48.0,0.0,10.0,traffic x10,2827.0,T1
+T1,rep1,adaptive_signals,MODEST_WRITES,45006,0,88.0,92.0,88.0,92.0,853,0,0.0,0,0,853,0,0,0,0.0,100.0,0.0,0.0,,0.0,T1
+T1,rep1,adaptive_signals,READ_HEAVY_HOTSPOT,45042,0,87.0,91.0,88.0,92.0,887,0,0.0,861,0,26,0,0,0,97.0,3.0,0.0,1.0,traffic x1,25480.0,T1
+T2,rep1,static_fast,READ_HEAVY,45467,0,13.0,24.0,17.0,27.0,919,40,4.4,919,40,0,0,0,0,,,,,,,T2
+T2,rep1,static_fast,MIXED_BURSTY,45442,0,16.0,26.0,24.0,32.0,892,31,3.5,892,31,0,0,0,0,,,,,,,T2
+T2,rep1,static_fast,BALANCED,45476,0,16.0,30.0,22.0,32.0,916,29,3.2,916,29,0,0,0,0,,,,,,,T2
+T2,rep1,static_fast,SPIKE,26997,0,16.0,25.0,22.0,33.0,550,15,2.7,550,15,0,0,0,0,,,,,,,T2
+T2,rep1,static_fast,MODEST_WRITES,45444,0,17.0,28.0,20.0,30.0,894,21,2.3,894,21,0,0,0,0,,,,,,,T2
+T2,rep1,static_fast,READ_HEAVY_HOTSPOT,45401,0,14.0,25.0,18.0,28.0,851,28,3.3,851,28,0,0,0,0,,,,,,,T2
+T2,rep1,static_moderate,READ_HEAVY,45253,0,17.0,25.0,18.0,26.0,956,0,0.0,0,0,956,0,0,0,,,,,,,T2
+T2,rep1,static_moderate,MIXED_BURSTY,45421,0,17.0,25.0,22.0,32.0,871,0,0.0,0,0,871,0,0,0,,,,,,,T2
+T2,rep1,static_moderate,BALANCED,45417,0,20.0,32.0,21.0,32.0,867,0,0.0,0,0,867,0,0,0,,,,,,,T2
+T2,rep1,static_moderate,SPIKE,26962,0,16.0,26.0,21.0,32.0,512,0,0.0,0,0,512,0,0,0,,,,,,,T2
+T2,rep1,static_moderate,MODEST_WRITES,45412,0,18.0,26.0,18.0,27.0,862,0,0.0,0,0,862,0,0,0,,,,,,,T2
+T2,rep1,static_moderate,READ_HEAVY_HOTSPOT,45382,0,16.0,27.0,17.0,27.0,882,0,0.0,0,0,882,0,0,0,,,,,,,T2
+T2,rep1,static_safe,READ_HEAVY,45531,0,17.0,24.0,34.0,43.0,983,0,0.0,0,0,0,0,983,0,,,,,,,T2
+T2,rep1,static_safe,MIXED_BURSTY,45435,0,16.0,26.0,37.0,51.0,885,0,0.0,0,0,0,0,885,0,,,,,,,T2
+T2,rep1,static_safe,BALANCED,45378,0,19.0,29.0,36.0,48.0,880,0,0.0,0,0,0,0,880,0,,,,,,,T2
+T2,rep1,static_safe,SPIKE,26899,0,16.0,25.0,36.0,52.0,497,0,0.0,0,0,0,0,497,0,,,,,,,T2
+T2,rep1,static_safe,MODEST_WRITES,45393,0,19.0,27.0,35.0,46.0,854,0,0.0,0,0,0,0,854,0,,,,,,,T2
+T2,rep1,static_safe,READ_HEAVY_HOTSPOT,45368,0,16.0,26.0,34.0,43.0,869,0,0.0,0,0,0,0,869,0,,,,,,,T2
+T2,rep1,adaptive,READ_HEAVY,45429,0,14.0,24.0,18.0,27.0,879,26,3.0,852,26,27,0,0,0,97.0,3.0,0.0,1.0,traffic x1,,T2
+T2,rep1,adaptive,MIXED_BURSTY,45456,0,17.0,26.0,31.0,48.0,906,2,0.2,45,2,268,0,593,0,6.0,31.0,64.0,12.0,traffic x12,,T2
+T2,rep1,adaptive,BALANCED,45342,0,19.0,32.0,35.0,46.0,844,0,0.0,0,0,12,0,832,0,0.0,3.0,97.0,1.0,traffic x1,,T2
+T2,rep1,adaptive,SPIKE,26966,0,15.0,26.0,21.0,33.0,518,6,1.2,233,6,285,0,0,0,49.0,51.0,0.0,11.0,traffic x11,,T2
+T2,rep1,adaptive,MODEST_WRITES,45423,0,19.0,30.0,19.0,30.0,878,0,0.0,0,0,878,0,0,0,0.0,100.0,0.0,0.0,,,T2
+T2,rep1,adaptive,READ_HEAVY_HOTSPOT,45439,0,12.0,24.0,17.0,27.0,889,28,3.1,870,28,19,0,0,0,97.0,3.0,0.0,1.0,traffic x1,,T2
+T2,rep1,adaptive_signals,READ_HEAVY,45462,0,17.0,25.0,18.0,27.0,912,0,0.0,884,0,28,0,0,0,97.0,3.0,0.0,1.0,traffic x1,4204.0,T2
+T2,rep1,adaptive_signals,MIXED_BURSTY,45511,0,16.0,25.0,27.0,44.0,961,0,0.0,59,0,405,0,497,0,6.0,45.0,50.0,12.0,traffic x12,121.0,T2
+T2,rep1,adaptive_signals,BALANCED,45430,0,19.0,31.0,35.0,48.0,889,0,0.0,0,0,24,0,865,0,0.0,3.0,97.0,1.0,traffic x1,0.0,T2
+T2,rep1,adaptive_signals,SPIKE,27011,0,17.0,24.0,22.0,36.0,562,0,0.0,190,0,327,0,45,0,35.0,56.0,9.0,9.0,traffic x9,1977.0,T2
+T2,rep1,adaptive_signals,MODEST_WRITES,45451,0,19.0,26.0,20.0,27.0,901,0,0.0,0,0,901,0,0,0,0.0,100.0,0.0,0.0,,0.0,T2
+T2,rep1,adaptive_signals,READ_HEAVY_HOTSPOT,45423,0,16.0,25.0,19.0,26.0,873,0,0.0,850,0,23,0,0,0,97.0,3.0,0.0,1.0,traffic x1,25680.0,T2

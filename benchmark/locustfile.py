@@ -16,9 +16,13 @@ listeners, which is the idiomatic Locust pattern for this.
 Configuration is via environment variables so Phase 9's run_benchmark.py
 can drive this file across configurations/presets without editing code:
 
-  BENCHMARK_MODE     static_fast | static_safe | adaptive   (default: adaptive)
+  BENCHMARK_MODE     static_fast | static_moderate | static_safe | adaptive | adaptive_signals
+                     (default: adaptive). adaptive = the traffic rule alone; adaptive_signals =
+                     traffic rule + hysteresis + the SAFE latency budget (adaptive_layer/rules.py) +
+                     per-key read-your-own-writes (see BENCHMARK_READ_OWN_WRITES).
   WORKLOAD_PRESET    READ_HEAVY | WRITE_HEAVY | MIXED_BURSTY | BALANCED | HOTSPOT |
-                     RAMP | SPIKE | HIGH_CONCURRENCY | MODEST_WRITES   (default: MIXED_BURSTY)
+                     RAMP | SPIKE | HIGH_CONCURRENCY | MODEST_WRITES | READ_HEAVY_HOTSPOT
+                     (default: MIXED_BURSTY)
   BENCHMARK_COLLECTION  Mongo collection name  (default: bench)
   BENCHMARK_KEY_SPACE   number of distinct synthetic keys  (default: 1000)
   BENCHMARK_OPS_PER_SEC per-user target ops/sec via constant_throughput (default: 5)
@@ -27,11 +31,15 @@ can drive this file across configurations/presets without editing code:
   BENCHMARK_PROBE_FRACTION share of iterations that are staleness probes (default 0.02; 0 disables)
   BENCHMARK_PAYLOAD_BYTES size of the payload field on every written doc, so
                         writes/reads/replication carry real data (default: 2048)
+  BENCHMARK_READ_OWN_WRITES adaptive_signals only: seconds the client remembers its own
+                        writes per key and reads them from the primary (default 5; 0 disables)
+  BENCHMARK_CLIENT_LOG  path; if set, adaptive_signals writes the client's counters (JSON)
 
 Standalone sanity run:
   locust -f benchmark/locustfile.py --headless -u 10 -r 5 -t 30s
 """
 
+import json
 import os
 import random
 import time
@@ -39,9 +47,10 @@ import time
 from locust import User, constant_throughput, events, task
 
 from adaptive_layer.client import AdaptiveClient
-from adaptive_layer.decision import FAST_SETTINGS, SAFE_SETTINGS, settings_name
+from adaptive_layer.decision import FAST_SETTINGS, MODERATE_SETTINGS, SAFE_SETTINGS, settings_name
 from adaptive_layer.feedback import FeedbackLoop
 from adaptive_layer.monitor import AccessPatternMonitor
+from adaptive_layer.rules import SIGNALS_THRESHOLDS, SignalConfig
 from benchmark.probe_log import ProbeTally
 from benchmark.switch_log import write_switch_log
 
@@ -57,6 +66,8 @@ SWITCH_LOG = os.environ.get("BENCHMARK_SWITCH_LOG")
 PROBE_LOG = os.environ.get("BENCHMARK_PROBE_LOG")
 PROBE_FRACTION = float(os.environ.get("BENCHMARK_PROBE_FRACTION", "0.02"))
 PAYLOAD_BYTES = int(os.environ.get("BENCHMARK_PAYLOAD_BYTES", "2048"))
+READ_OWN_WRITES_SECONDS = float(os.environ.get("BENCHMARK_READ_OWN_WRITES", "5"))
+CLIENT_LOG = os.environ.get("BENCHMARK_CLIENT_LOG")
 # Random (incompressible) content, built once: every doc carries the same
 # bytes, but the size is what drives serialization/oplog/replication cost.
 PAYLOAD = os.urandom(PAYLOAD_BYTES // 2).hex()
@@ -96,7 +107,7 @@ def current_write_probability(preset, now=None):
     short, sharp write burst inside otherwise steady read-heavy traffic,
     distinct from MIXED_BURSTY's 50/50 square wave.
     """
-    if preset == "READ_HEAVY":
+    if preset in ("READ_HEAVY", "READ_HEAVY_HOTSPOT"):
         return 0.05
     if preset == "WRITE_HEAVY":
         return 0.95
@@ -124,8 +135,11 @@ def pick_key(preset, key_space):
     read/write-ratio-only Decision Engine can't see directly but which
     still stresses replication/locking differently than spreading load
     evenly - worth comparing even though it isn't a Decision Engine input.
+    READ_HEAVY_HOTSPOT uses the same key skew with READ_HEAVY's 5% writes: a
+    read-heavy collection whose reads keep hitting the few documents that are
+    being written. Per-key read-your-own-writes sends most of those reads to the primary.
     """
-    if preset != "HOTSPOT":
+    if preset not in ("HOTSPOT", "READ_HEAVY_HOTSPOT"):
         return random.randrange(key_space)
 
     hot_size = max(1, int(key_space * _HOTSPOT_FRACTION))
@@ -137,7 +151,10 @@ def pick_key(preset, key_space):
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
     monitor = AccessPatternMonitor(window_seconds=WINDOW_SECONDS)
-    client = AdaptiveClient(URI, DB_NAME, monitor=monitor, verbose=False)
+    read_own_writes = READ_OWN_WRITES_SECONDS if (MODE == "adaptive_signals" and READ_OWN_WRITES_SECONDS > 0) else None
+    client = AdaptiveClient(
+        URI, DB_NAME, monitor=monitor, verbose=False, key_field="key", read_own_writes_seconds=read_own_writes,
+    )
     client._db.drop_collection(COLLECTION)  # start each run from an empty collection
     # Without this, every read is a full collection scan over a collection that
     # grows for the whole run - measuring scan time, not consistency cost.
@@ -146,11 +163,19 @@ def on_test_start(environment, **kwargs):
     feedback_loop = None
     if MODE == "static_fast":
         client.set_active_settings(COLLECTION, FAST_SETTINGS)
+    elif MODE == "static_moderate":
+        client.set_active_settings(COLLECTION, MODERATE_SETTINGS)
     elif MODE == "static_safe":
         client.set_active_settings(COLLECTION, SAFE_SETTINGS)
     elif MODE == "adaptive":
         feedback_loop = FeedbackLoop(
             client, monitor, interval_seconds=INTERVAL_SECONDS, cooldown_seconds=COOLDOWN_SECONDS
+        )
+        feedback_loop.start()
+    elif MODE == "adaptive_signals":
+        feedback_loop = FeedbackLoop(
+            client, monitor, interval_seconds=INTERVAL_SECONDS, cooldown_seconds=COOLDOWN_SECONDS,
+            thresholds=SIGNALS_THRESHOLDS, signals=SignalConfig(),
         )
         feedback_loop.start()
     else:
@@ -179,6 +204,10 @@ def on_test_stop(environment, **kwargs):
     if PROBE_LOG and getattr(environment, "probe_tally", None) is not None:
         environment.probe_tally.write(PROBE_LOG)
     client = getattr(environment, "shared_client", None)
+    if CLIENT_LOG and client is not None:
+        with open(CLIENT_LOG, "w", encoding="utf-8") as f:
+            json.dump({"redirected_reads": client.redirected_reads,
+                       "read_own_writes_seconds": client.read_own_writes_seconds}, f)
     if client is not None:
         client.close()
     print("[locustfile] test_stop: cleaned up shared client/feedback loop")

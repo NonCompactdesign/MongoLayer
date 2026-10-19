@@ -23,8 +23,9 @@ import subprocess
 
 NODES = ["mongo1", "mongo2", "mongo3"]
 IFACE = "eth0"
+IFB = "ifb0"  # used by benchmark/topology.py to delay incoming client requests
 
-LATENCY_LEVELS_MS = [0, 5, 43]  # default sweep; 1 and 33 remain valid via --latency
+LATENCY_LEVELS_MS = [0, 5]  # default sweep; 1, 33 and 43 remain valid via --latency (T1 uses 43 one way between nodes)
 ALL_LATENCY_LEVELS_MS = [0, 1, 5, 33, 43]
 LATENCY_LABELS = {
     0: "baseline (localhost)",
@@ -52,9 +53,12 @@ def _ip(node):
 
 
 def clear():
-    """Remove any injected latency from every node (safe to call repeatedly)."""
+    """Remove any injected latency from every node (safe to call repeatedly),
+    including benchmark/topology.py's ingress shaping."""
     for node in NODES:
         _exec(node, f"tc qdisc del dev {IFACE} root", check=False)
+        _exec(node, f"tc qdisc del dev {IFACE} ingress", check=False)
+        _exec(node, f"ip link del {IFB}", check=False)
 
 
 def apply_latency(delay_ms):

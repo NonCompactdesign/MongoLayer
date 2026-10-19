@@ -20,9 +20,10 @@ def test_results_dir_layout_is_per_latency_and_repeat_under_a_separate_root():
     assert d != rb.results_dir_for(43, rep=1)
 
 
-def test_default_sweep_is_three_latency_levels_and_modest_writes_is_a_preset():
-    assert netem.LATENCY_LEVELS_MS == [0, 5, 43]
-    assert "MODEST_WRITES" in rb.PRESETS and len(rb.PRESETS) == 9
+def test_default_sweep_is_two_latency_levels_and_modest_writes_is_a_preset():
+    assert netem.LATENCY_LEVELS_MS == [0, 5]
+    assert "MODEST_WRITES" in rb.PRESETS and "READ_HEAVY_HOTSPOT" in rb.PRESETS and len(rb.PRESETS) == 10
+    assert rb.CONFIGS == ["static_fast", "static_moderate", "static_safe", "adaptive", "adaptive_signals"]
 
 
 def test_run_suite_runs_every_combination_and_always_clears_latency(monkeypatch, tmp_path):
@@ -34,7 +35,7 @@ def test_run_suite_runs_every_combination_and_always_clears_latency(monkeypatch,
 
     results = rb.run_suite(5, quick=True, presets=["READ_HEAVY", "SPIKE"], rep=3)
 
-    assert len(results) == 3 * 2
+    assert len(results) == len(rb.CONFIGS) * 2
     assert {c[2] for c in calls} == {tmp_path / "latency_5ms" / "rep3"}
     assert (tmp_path / "latency_5ms" / "rep3").is_dir()
     assert events == [("apply", 5), ("clear",)]
@@ -55,7 +56,7 @@ def test_run_suite_clears_latency_even_if_a_run_raises(monkeypatch, tmp_path):
     assert events == ["apply", "clear"]
 
 
-@pytest.mark.parametrize("config, expects_log", [("adaptive", True), ("static_fast", False), ("static_safe", False)])
+@pytest.mark.parametrize("config, expects_log", [("adaptive", True), ("adaptive_signals", True), ("static_fast", False), ("static_moderate", False), ("static_safe", False)])
 def test_only_adaptive_runs_get_a_switch_log_path(monkeypatch, tmp_path, config, expects_log):
     seen = {}
 
@@ -73,6 +74,6 @@ def test_only_adaptive_runs_get_a_switch_log_path(monkeypatch, tmp_path, config,
 
     assert ("BENCHMARK_SWITCH_LOG" in seen) is expects_log
     if expects_log:
-        assert seen["BENCHMARK_SWITCH_LOG"].endswith("adaptive_READ_HEAVY_switches.csv")
+        assert seen["BENCHMARK_SWITCH_LOG"].endswith(f"{config}_READ_HEAVY_switches.csv")
     # every run, adaptive or not, writes its staleness-probe tally
     assert seen["BENCHMARK_PROBE_LOG"].endswith(f"{config}_READ_HEAVY_probe.csv")

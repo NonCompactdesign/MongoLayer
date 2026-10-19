@@ -1,0 +1,14 @@
+event,seconds,settings,write_share,reads,writes,reason
+start,0.0,MODERATE,,,,client default
+switch,5.004,SAFE,0.6054,425,652,write share 0.61 > 0.40
+switch,30.063,MODERATE,0.1966,3065,750,write share 0.20 between 0.15 and 0.40
+switch,40.086,SAFE,0.5219,1825,1992,write share 0.52 > 0.40
+switch,60.114,MODERATE,0.1939,3081,741,write share 0.19 between 0.15 and 0.40
+switch,70.129,SAFE,0.5106,1872,1953,write share 0.51 > 0.40
+switch,90.144,MODERATE,0.1967,3084,755,write share 0.20 between 0.15 and 0.40
+switch,100.154,SAFE,0.5189,1844,1989,write share 0.52 > 0.40
+switch,120.199,MODERATE,0.1979,3064,756,write share 0.20 between 0.15 and 0.40
+switch,130.222,SAFE,0.5165,1847,1973,write share 0.52 > 0.40
+switch,150.248,MODERATE,0.1829,3132,701,write share 0.18 between 0.15 and 0.40
+switch,160.262,SAFE,0.5236,1817,1997,write share 0.52 > 0.40
+stop,179.142,SAFE,,,,

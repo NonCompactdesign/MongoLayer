@@ -23,9 +23,18 @@ Adaptive runs also write <config>_<preset>_switches.csv: what settings the
 feedback loop chose and when. Every run writes <config>_<preset>_probe.csv: the
 stale-read tally of the staleness probes mixed into the traffic (benchmark/probe_log.py).
 
+Configurations: static_fast, static_moderate, static_safe (fixed settings), adaptive (the
+traffic rule alone) and adaptive_signals (traffic rule + hysteresis + SAFE latency budget +
+per-key read-your-own-writes, adaptive_layer/rules.py and client.py).
+--topology T1 T2 runs on unequal client/node distances (benchmark/topology.py) instead of
+the equal --latency levels, after pinning the primary to mongo1 (benchmark/cluster.py);
+those results land in results/signals_eval/topology_<name>/rep<k>/.
+
 Usage:
     python benchmark/run_benchmark.py --quick                  # fast iteration, 1 repeat
-    python benchmark/run_benchmark.py --latency 0 43           # only these one-way delays (ms)
+    python benchmark/run_benchmark.py --topology T1 --configs static_fast adaptive_signals \
+        --presets READ_HEAVY --duration 60s --repeats 1        # one small targeted run
+    python benchmark/run_benchmark.py --latency 0 5            # only these one-way delays (ms)
     python benchmark/run_benchmark.py --repeats 3              # full-length run, 3 repeats (default)
     python benchmark/run_benchmark.py --duration-scale 0.4     # shorter runs (300 s -> 120 s)
 
@@ -43,16 +52,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-from benchmark import netem
+from benchmark import netem, topology
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCUSTFILE = REPO_ROOT / "benchmark" / "locustfile.py"
 RESULTS_DIR = REPO_ROOT / "results"
 
-CONFIGS = ["static_fast", "static_safe", "adaptive"]
+CONFIGS = ["static_fast", "static_moderate", "static_safe", "adaptive", "adaptive_signals"]
+ADAPTIVE_CONFIGS = ("adaptive", "adaptive_signals")  # the ones with a feedback loop (and a switch log)
 PRESETS = [
     "READ_HEAVY", "WRITE_HEAVY", "MIXED_BURSTY",
-    "BALANCED", "HOTSPOT", "RAMP", "SPIKE", "HIGH_CONCURRENCY", "MODEST_WRITES",
+    "BALANCED", "HOTSPOT", "RAMP", "SPIKE", "HIGH_CONCURRENCY", "MODEST_WRITES", "READ_HEAVY_HOTSPOT",
 ]
 
 # Baseline load shape for the "steady" presets (READ_HEAVY, WRITE_HEAVY,
@@ -102,11 +112,42 @@ def params_for(preset, quick, duration_scale=1.0):
 EVAL_DIR = RESULTS_DIR / "write_share_eval"
 
 
+SIGNALS_DIR = RESULTS_DIR / "signals_eval"
+
+
 def results_dir_for(latency_ms, rep=1):
     return EVAL_DIR / f"latency_{latency_ms}ms" / f"rep{rep}"
 
 
-def run_one(config, preset, params, results_dir=RESULTS_DIR):
+def topology_dir_for(name, rep=1):
+    return SIGNALS_DIR / f"topology_{name}" / f"rep{rep}"
+
+
+def _kill_tree(proc):
+    """Kill a process and everything it started. On Windows the venv's python.exe is a launcher
+    that starts the real interpreter as a child, so killing only `proc` would leave Locust running."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+    else:
+        proc.kill()
+
+
+def _run_with_watchdog(cmd, env, timeout_s):
+    """subprocess.run(...) that kills the whole process tree after timeout_s.
+    Returns a CompletedProcess, or None if it had to be killed."""
+    proc = subprocess.Popen(cmd, cwd=REPO_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        out, err = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        proc.communicate()
+        return None
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def run_one(config, preset, params, results_dir=RESULTS_DIR, timeout_s=None):
+    """One Locust run. With timeout_s, a run that has not exited by then is killed (a watchdog:
+    on 2026-10-19 one 180 s run never exited and blocked an overnight evaluation for 6 hours)."""
     collection = f"bench_{config}_{preset}".lower()
     csv_prefix = Path(results_dir) / f"{config}_{preset}"
 
@@ -121,8 +162,10 @@ def run_one(config, preset, params, results_dir=RESULTS_DIR):
         "WORKLOAD_PRESET": preset,
         "BENCHMARK_COLLECTION": collection,
     }
-    if config == "adaptive":
+    if config in ADAPTIVE_CONFIGS:
         env["BENCHMARK_SWITCH_LOG"] = f"{csv_prefix}_switches.csv"
+    if config == "adaptive_signals":
+        env["BENCHMARK_CLIENT_LOG"] = f"{csv_prefix}_client.json"
     env["BENCHMARK_PROBE_LOG"] = f"{csv_prefix}_probe.csv"
     cmd = [
         sys.executable, "-m", "locust",
@@ -133,15 +176,23 @@ def run_one(config, preset, params, results_dir=RESULTS_DIR):
         "-t", params["duration"],
         "--csv", str(csv_prefix),
         "--only-summary",
+        # failed requests are counted from the stats CSV; a non-zero exit then means Locust itself broke
+        "--exit-code-on-error", "0",
     ]
 
-    result = subprocess.run(
-        cmd,
-        cwd=REPO_ROOT,
-        env={**os.environ, **env},
-        capture_output=True,
-        text=True,
-    )
+    if timeout_s is None:
+        result = subprocess.run(
+            cmd,
+            cwd=REPO_ROOT,
+            env={**os.environ, **env},
+            capture_output=True,
+            text=True,
+        )
+    else:
+        result = _run_with_watchdog(cmd, {**os.environ, **env}, timeout_s)
+        if result is None:
+            print(f"  !! locust did not finish within {timeout_s:.0f} s - killed it (and its child processes)")
+            return None
     if result.returncode != 0:
         print(f"  !! locust exited with code {result.returncode}")
         print(result.stdout[-2000:])
@@ -183,34 +234,42 @@ def _summarize_stats_csv(csv_prefix):
     return summary
 
 
-def run_suite(latency_ms, quick, presets=PRESETS, configs=CONFIGS, rep=1, duration_scale=1.0):
-    """Run every (config x preset) at one injected latency level. Always clears
-    the injected latency afterwards so the cluster is never left slowed."""
-    results_dir = results_dir_for(latency_ms, rep)
+def run_suite(latency_ms, quick, presets=PRESETS, configs=CONFIGS, rep=1, duration_scale=1.0,
+              topo=None, duration=None):
+    """Run every (config x preset) at one injected latency level, or on topology `topo`
+    when given. Always clears the injected delays afterwards so the cluster is never left
+    slowed. `duration` ("60s") overrides every run's length."""
+    results_dir = topology_dir_for(topo.name, rep) if topo is not None else results_dir_for(latency_ms, rep)
     results_dir.mkdir(parents=True, exist_ok=True)
-    netem.apply_latency(latency_ms)
+    if topo is not None:
+        topology.apply(topo)
+    else:
+        netem.apply_latency(latency_ms)
     try:
         results = {}
         for config in configs:
             for preset in presets:
-                results[(config, preset)] = run_one(config, preset, params_for(preset, quick, duration_scale), results_dir)
+                params = params_for(preset, quick, duration_scale)
+                if duration:
+                    params["duration"] = duration
+                results[(config, preset)] = run_one(config, preset, params, results_dir)
         return results
     finally:
         netem.clear()
 
 
-def print_summary(latency_ms, results, rep=1):
+def print_summary(latency_ms, results, rep=1, label=None):
     print()
     print("=" * 72)
-    print(f"SUMMARY - inter-node one-way delay {latency_ms} ms, repeat {rep}")
+    print(f"SUMMARY - {label or f'inter-node one-way delay {latency_ms} ms'}, repeat {rep}")
     print("=" * 72)
-    print(f"{'config':<12} {'preset':<17} {'reqs':>6} {'fail':>5} {'req/s':>8} {'p50':>6} {'p95':>6} {'p99':>6}")
+    print(f"{'config':<17} {'preset':<19} {'reqs':>6} {'fail':>5} {'req/s':>8} {'p50':>6} {'p95':>6} {'p99':>6}")
     for (config, preset), summary in results.items():
         if summary is None:
-            print(f"{config:<12} {preset:<17} {'FAILED':>6}")
+            print(f"{config:<17} {preset:<19} {'FAILED':>6}")
             continue
         print(
-            f"{config:<12} {preset:<17} {summary['requests']:>6} {summary['failures']:>5} "
+            f"{config:<17} {preset:<19} {summary['requests']:>6} {summary['failures']:>5} "
             f"{summary['req_per_s']:>8.2f} {summary['p50_ms']:>6.0f} {summary['p95_ms']:>6.0f} {summary['p99_ms']:>6.0f}"
         )
 
@@ -227,21 +286,34 @@ def main():
     )
     parser.add_argument("--repeats", type=int, default=None, help="repeats of the whole sweep (default: 3, or 1 with --quick)")
     parser.add_argument("--duration-scale", type=float, default=1.0, help="multiply every run length (default: 1.0)")
+    parser.add_argument("--duration", default=None, help='fixed length for every run, e.g. "60s" (overrides the tables)')
+    parser.add_argument("--topology", nargs="+", default=None,
+                        help="run on these topologies (T1, T2, EQUAL-<ms>) instead of the --latency levels")
+    parser.add_argument("--configs", nargs="+", default=CONFIGS, choices=CONFIGS, help="configurations to run")
+    parser.add_argument("--presets", nargs="+", default=PRESETS, choices=PRESETS, help="workload presets to run")
     args = parser.parse_args()
     repeats = args.repeats if args.repeats is not None else (1 if args.quick else 3)
 
-    EVAL_DIR.mkdir(parents=True, exist_ok=True)
-    total = repeats * len(args.latency) * len(CONFIGS) * len(PRESETS)
-    print(f"Benchmark runner: {'QUICK' if args.quick else 'FULL'} mode - {repeats} repeats x {len(args.latency)} latency "
-          f"levels x {len(CONFIGS)} configs x {len(PRESETS)} presets = {total} runs")
+    if args.topology:
+        from benchmark import cluster
+        cluster.pin_primary()  # "far from the primary" needs a known primary
+        levels = [(None, topology.by_name(name)) for name in args.topology]
+    else:
+        EVAL_DIR.mkdir(parents=True, exist_ok=True)
+        levels = [(ms, None) for ms in args.latency]
+    total = repeats * len(levels) * len(args.configs) * len(args.presets)
+    print(f"Benchmark runner: {'QUICK' if args.quick else 'FULL'} mode - {repeats} repeats x {len(levels)} network "
+          f"levels x {len(args.configs)} configs x {len(args.presets)} presets = {total} runs")
 
     any_failed = False
     for rep in range(1, repeats + 1):
-        for latency_ms in args.latency:
-            print(f"\n##### repeat {rep}/{repeats}, latency {latency_ms} ms one-way "
-                  f"({netem.LATENCY_LABELS.get(latency_ms, 'custom')}) #####")
-            results = run_suite(latency_ms, args.quick, rep=rep, duration_scale=args.duration_scale)
-            print_summary(latency_ms, results, rep)
+        for latency_ms, topo in levels:
+            label = (f"topology {topo.name} ({topo.description})" if topo is not None else
+                     f"latency {latency_ms} ms one-way ({netem.LATENCY_LABELS.get(latency_ms, 'custom')})")
+            print(f"\n##### repeat {rep}/{repeats}, {label} #####")
+            results = run_suite(latency_ms, args.quick, presets=args.presets, configs=args.configs, rep=rep,
+                                duration_scale=args.duration_scale, topo=topo, duration=args.duration)
+            print_summary(latency_ms, results, rep, label)
             any_failed |= any(v is None or v["failures"] > 0 for v in results.values())
 
     sys.exit(1 if any_failed else 0)

@@ -43,7 +43,7 @@ def _write_probe(path, config, rep):
     """static_fast: 100 FAST probes per repeat, 20 stale in rep 1 and 40 in rep 2.
     adaptive: 60 FAST probes (30 stale) and 40 SAFE probes (0 stale). static_safe: 100 SAFE, 0 stale."""
     rows = {"static_fast": [("FAST", 100, 20 * rep)], "static_safe": [("SAFE", 100, 0)],
-            "adaptive": [("FAST", 60, 30), ("SAFE", 40, 0)]}[config]
+            "adaptive": [("FAST", 60, 30), ("SAFE", 40, 0)]}.get(config, [("MODERATE", 100, 0)])
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["settings", "probes", "stale"])

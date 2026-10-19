@@ -1,0 +1,32 @@
+[
+  {
+    "check": "Docker containers mongo1-3 running",
+    "ok": true,
+    "detail": "running: mongo1, mongo2, mongo3"
+  },
+  {
+    "check": "no leftover network delays",
+    "ok": true,
+    "detail": "no injected delays"
+  },
+  {
+    "check": "replica set healthy, mongo1 pinned, direct replication",
+    "ok": true,
+    "detail": "states {'mongo1': 'PRIMARY', 'mongo2': 'SECONDARY', 'mongo3': 'SECONDARY'}, sync sources {'mongo2': 'mongo1', 'mongo3': 'mongo1'}"
+  },
+  {
+    "check": "topology T1 can be applied and measured",
+    "ok": true,
+    "detail": "T1 client round trips mongo1 87.5 ms, mongo2 1.9 ms, mongo3 87.0 ms"
+  },
+  {
+    "check": "test suite passes",
+    "ok": true,
+    "detail": "112 passed in 13.51s"
+  },
+  {
+    "check": "disk space",
+    "ok": true,
+    "detail": "20.1 GB free"
+  }
+]
