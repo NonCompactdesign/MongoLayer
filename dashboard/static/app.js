@@ -544,30 +544,12 @@ function connect() {
     engine = d.engine;
     control = d.control;
     renderAll();
-    if (window.onEvalState) window.onEvalState(d.eval);
   };
   ws.onclose = () => {
     engine = { status: "disconnected", message: "Reconnecting to the dashboard server ..." };
     renderEngine();
     setTimeout(connect, 2000);
   };
-}
-
-function showTab(name) {
-  for (const b of document.querySelectorAll(".tab")) b.classList.toggle("on", b.dataset.tab === name);
-  $("tab-live").hidden = name !== "live";
-  $("tab-eval").hidden = name !== "eval";
-  $("live-controls").hidden = name !== "live";
-  try { localStorage.setItem("dashboard-tab", name); } catch (e) { /* storage blocked: fine */ }
-  window.dispatchEvent(new Event("resize"));
-  if (name === "eval" && window.onEvalShown) window.onEvalShown();
-}
-
-function wireTabs() {
-  for (const b of document.querySelectorAll(".tab")) b.addEventListener("click", () => showTab(b.dataset.tab));
-  let saved = "live";
-  try { saved = localStorage.getItem("dashboard-tab") || "live"; } catch (e) { /* storage blocked */ }
-  showTab(saved === "eval" ? "eval" : "live");
 }
 
 async function init() {
@@ -579,7 +561,6 @@ async function init() {
   for (const d of Object.values(defs)) resizer.observe($(d.el));
   renderKnobs(true);
   renderAll();
-  wireTabs();
   connect();
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { buildCharts(); renderAll(); });
 }

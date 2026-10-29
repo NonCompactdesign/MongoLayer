@@ -13,11 +13,7 @@
       <h1>Adaptive Consistency Layer</h1>
       <span class="sub">MongoDB replica set</span>
     </div>
-    <nav class="tabs" role="tablist">
-      <button class="tab on" data-tab="live" role="tab">Live demo</button>
-      <button class="tab" data-tab="eval" role="tab">Evaluation <span id="eval-tab-pill" class="tab-pill" hidden></span></button>
-    </nav>
-    <div class="engine" id="live-controls">
+    <div class="engine">
       <span id="engine-pill" class="pill">stopped</span>
       <span id="engine-msg" class="muted"></span>
       <button id="btn-start" class="primary">Start engine</button>
@@ -27,7 +23,7 @@
   </header>
   <div id="engine-error" class="error" hidden></div>
 
-  <div class="layout" id="tab-live">
+  <div class="layout">
     <aside class="knobs">
       <section>
         <h2>Load</h2>
@@ -168,144 +164,7 @@
     </main>
   </div>
 
-  <div class="layout" id="tab-eval" hidden>
-    <aside class="knobs">
-      <section>
-        <h2>Profile</h2>
-        <div id="ev-profiles" class="segmented"></div>
-        <small class="muted">Fills the plan below; then tune anything.</small>
-      </section>
-      <section>
-        <h2>Network setups</h2>
-        <div id="ev-setups" class="checks"></div>
-      </section>
-      <section>
-        <h2>Configurations</h2>
-        <div id="ev-configs" class="checks"></div>
-      </section>
-      <section>
-        <h2>Workloads</h2>
-        <div id="ev-presets" class="checks"></div>
-      </section>
-      <section>
-        <h2>Run length</h2>
-        <label class="toggle"><input id="ev-fixed-on" type="checkbox"><span>Same length for every run</span></label>
-        <label class="knob" id="ev-scale-wrap">
-          <span>Scale of full length <b id="ev-scale-v"></b></span>
-          <input id="ev-scale" type="range" min="0.1" max="1" step="0.05">
-          <small class="muted">Full lengths are 180–300 s per workload; minimum 30 s.</small>
-        </label>
-        <label class="knob" id="ev-fixed-wrap" hidden>
-          <span>Seconds per run</span>
-          <input id="ev-fixed" type="number" min="10" max="900" step="5" class="num">
-        </label>
-        <label class="knob">
-          <span>Repeats</span>
-          <input id="ev-repeats" type="number" min="1" max="10" step="1" class="num">
-        </label>
-      </section>
-      <section>
-        <h2>Checks and staleness</h2>
-        <label class="toggle"><input id="ev-checks" type="checkbox"><span>Live rule checks first (~2 min)</span></label>
-        <div class="sub-h">Staleness experiment on</div>
-        <div id="ev-stale-setups" class="checks"></div>
-        <label class="knob">
-          <span>Trials per scenario</span>
-          <input id="ev-trials" type="number" min="1" max="1000" step="10" class="num">
-        </label>
-      </section>
-    </aside>
-
-    <main>
-      <section class="card ev-plan">
-        <div class="ev-plan-head">
-          <div>
-            <div class="label">Estimated time</div>
-            <div class="value" id="ev-est-total">–</div>
-            <div class="detail" id="ev-est-detail"></div>
-          </div>
-          <div class="ev-actions">
-            <button id="ev-start" class="primary">Start full run</button>
-            <button id="ev-stop">Stop</button>
-          </div>
-        </div>
-        <table class="ev-est-table"><tbody id="ev-est-rows"></tbody></table>
-        <div class="ev-runs">
-          <span class="muted">Earlier runs</span>
-          <select id="ev-runs"></select>
-          <button id="ev-view">View</button>
-          <button id="ev-resume">Resume</button>
-        </div>
-      </section>
-
-      <section class="tiles">
-        <div class="tile"><div class="label">Status</div><div class="value" id="ev-status">idle</div><div class="detail" id="ev-tag"></div></div>
-        <div class="tile"><div class="label">Phase</div><div class="value small" id="ev-phase">–</div><div class="detail" id="ev-phase-d"></div></div>
-        <div class="tile"><div class="label">Runs done</div><div class="value" id="ev-done">–</div><div class="detail" id="ev-done-d"></div></div>
-        <div class="tile"><div class="label">Elapsed</div><div class="value" id="ev-elapsed">–</div><div class="detail">since start</div></div>
-        <div class="tile"><div class="label">Remaining</div><div class="value" id="ev-remaining">–</div><div class="detail" id="ev-finish"></div></div>
-      </section>
-      <div class="progress"><div id="ev-bar"></div></div>
-      <div id="ev-error" class="error" hidden></div>
-
-      <section class="card">
-        <figcaption>Run in progress <small class="muted" id="ev-cur-label"></small></figcaption>
-        <div class="ev-cur-grid">
-          <div><div class="sub-h">Throughput (req/s)</div><div id="ev-c-rps" class="chart"></div></div>
-          <div><div class="sub-h">Latency (ms, log) — read / write p50 and p95, rolling</div><div id="ev-c-lat" class="chart"></div></div>
-        </div>
-      </section>
-
-      <section class="charts">
-        <figure class="card"><figcaption>Preflight and live checks</figcaption><div id="ev-checks-list" class="checklist"></div></figure>
-        <figure class="card"><figcaption>Staleness experiment <small class="muted">stale read-backs, %</small></figcaption><div id="ev-stale"></div></figure>
-      </section>
-
-      <section class="card">
-        <div class="ev-res-head">
-          <h2>Results by setup</h2>
-          <div class="segmented small" id="ev-metric">
-            <button data-metric="read_p50" class="on">Read p50</button>
-            <button data-metric="read_p95">Read p95</button>
-            <button data-metric="write_p50">Write p50</button>
-            <button data-metric="write_p95">Write p95</button>
-            <button data-metric="stale_pct">Stale %</button>
-          </div>
-        </div>
-        <div id="ev-legend" class="ev-legend"></div>
-        <div id="ev-bars"></div>
-      </section>
-
-      <section class="card">
-        <h2>Where the adaptive layer spent its time</h2>
-        <div id="ev-settings"></div>
-      </section>
-
-      <section class="card log">
-        <h2>Finished runs</h2>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Setup</th><th>Config</th><th>Workload</th><th>Requests</th><th>Fail</th><th>Read p50 / p95</th><th>Write p50 / p95</th><th>Stale probes</th><th>FAST / MOD / SAFE</th><th>Switches</th></tr></thead>
-            <tbody id="ev-table"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="card" id="ev-analysis-card" hidden>
-        <h2>Integrity and expectations</h2>
-        <div id="ev-analysis"></div>
-        <div id="ev-figs" class="ev-figs"></div>
-      </section>
-
-      <section class="card log">
-        <h2>Log</h2>
-        <pre id="ev-log" class="ev-log"></pre>
-      </section>
-    </main>
-  </div>
-
   <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
   <script src="/static/app.js"></script>
-  <script src="/static/eval.js"></script>
 </body>
 </html>

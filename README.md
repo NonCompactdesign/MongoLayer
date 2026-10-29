@@ -40,10 +40,9 @@ adaptive_layer/   the middleware
   decision.py       the three settings and the traffic rule (with hysteresis)
   rules.py          latency budget and per-collection policy on top of the traffic rule
   feedback.py       the background loop that decides and switches, with a cooldown
-dashboard/        web dashboard (Live demo and Evaluation tabs)
-  server.py         FastAPI server: engine and evaluation start/stop, knobs, presets, WebSocket updates
+dashboard/        live web dashboard
+  server.py         FastAPI server: engine start/stop, knobs, presets, WebSocket updates
   engine.py         the live engine: traffic generator, feedback loop, one-second samples
-  evaluation.py     the full evaluation run from the page: plan, estimate, progress, live run data
   presets.py        one-click scenarios
   static/           the page (HTML, CSS, JS with uPlot charts)
 testbed/          control of the Docker replica set
@@ -100,9 +99,8 @@ config live in Docker volumes). Connection string:
 .venv\Scripts\python -m dashboard.server
 ```
 
-Open http://localhost:8000. It has two tabs; only one of them uses the cluster at a time.
-
-### Live demo tab
+Open http://localhost:8000. The dashboard is for watching the layer live; the full evaluation
+runs from the command line (below).
 
 Press **Start engine** (it pins mongo1 as primary, then starts the traffic). Then:
 
@@ -118,30 +116,13 @@ Press **Start engine** (it pins mongo1 as primary, then starts the traffic). The
 Press **Stop engine** before closing: it clears the injected network delays. `Ctrl+C` in the server
 terminal does the same.
 
-### Evaluation tab
-
-Runs the full evaluation: every fixed setting (static FAST, MODERATE, SAFE) and the adaptive layer,
-on each chosen network setup and workload, then the staleness experiment.
-
-- **Plan:** start from a profile (SMOKE ~14 min, FULL ~3 h 45 min, FULL_ALL ~6 h 10 min), then tune the
-  setups, configurations, workloads, run length (scale of the full length, or fixed seconds per
-  run), repeats, the live rule checks, and the staleness setups and trials. The estimated time and
-  finish time update as you change it.
-- **While it runs:** phase, runs done, elapsed and remaining time (following the real pace), live
-  throughput and read/write latency of the run in progress, preflight and rule-check results, and
-  the results of every finished run: grouped bars per setup (read/write p50/p95, stale %), the
-  adaptive layer's time in FAST / MODERATE / SAFE, and a table. At the end: integrity checks,
-  expectations and the figures.
-- **Stop** ends the run in progress without counting it; **Resume** an earlier run from the list to
-  run only what is left, or **View** it to see its results. Everything is kept in
-  `results/signals_eval/<tag>/`.
-
 ## Evaluation from the command line
 
 ```bash
 .venv\Scripts\python -m benchmark.signals_check                      # live check of each rule (~2 min)
 .venv\Scripts\python -m benchmark.signals_eval --profile SMOKE       # quick pass of the whole pipeline (~14 min)
 .venv\Scripts\python -m benchmark.signals_eval                       # full evaluation (~3 h 45 min)
+.venv\Scripts\python -m benchmark.signals_eval --profile FULL_ALL    # the same with all 10 workloads (~6 h 10 min)
 .venv\Scripts\python -m benchmark.signals_eval --tag <tag>           # resume an interrupted run
 ```
 

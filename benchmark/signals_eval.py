@@ -229,7 +229,7 @@ def preflight(out):
 
 # --- the phases -----------------------------------------------------------------------------------
 
-def run_live_checks(out, log, should_stop=None):
+def run_live_checks(out, log):
     from benchmark import signals_check
 
     path = Path(out) / "checks.json"
@@ -237,8 +237,6 @@ def run_live_checks(out, log, should_stop=None):
     cluster.pin_primary()
     try:
         for name, fn in signals_check.SCENARIOS.items():
-            if should_stop and should_stop():
-                break
             if name in results:
                 log.say(f"check {name}: already done ({'PASS' if results[name]['pass'] else 'FAIL'})")
                 continue
@@ -275,10 +273,9 @@ def watchdog_seconds(params):
     return _seconds(params["duration"]) + WATCHDOG_GRACE_S
 
 
-def run_load_tests(out, plan, log, should_stop=None, progress=None):
-    """Every load-test run not done yet. should_stop() is checked between runs (a stopped run is
-    not marked done, so a resume runs it again); progress(event, cell, info) is told when each run
-    starts ("start", its Locust params) and ends ("done", its summary or None)."""
+def run_load_tests(out, plan, log):
+    """Every load-test run not done yet (each finished run leaves a .done marker, so a rerun with
+    the same tag resumes)."""
     cells = plan.cells()
     todo = [c for c in cells if not is_done(out, *c)]
     log.say(f"load tests: {len(cells)} runs planned, {len(cells) - len(todo)} already done, {len(todo)} to go")
@@ -286,7 +283,7 @@ def run_load_tests(out, plan, log, should_stop=None, progress=None):
     done_now = 0
     for setup in plan.setups:
         mine = [c for c in todo if c[0] == setup]
-        if not mine or (should_stop and should_stop()):
+        if not mine:
             continue
         topo = topology.by_name(setup)
         cluster.pin_primary()
@@ -294,16 +291,12 @@ def run_load_tests(out, plan, log, should_stop=None, progress=None):
         log.say(f"setup {topo.name}: {topo.description}")
         try:
             for (_, rep, config, preset) in mine:
-                if should_stop and should_stop():
-                    break
                 prefix = cell_prefix(out, setup, rep, config, preset)
                 prefix.parent.mkdir(parents=True, exist_ok=True)
                 params = plan.params(preset)
-                if progress:
-                    progress("start", (setup, rep, config, preset), params)
                 t0 = time.monotonic()
                 summary, attempts = None, 0
-                while summary is None and attempts < 1 + RETRIES and not (should_stop and should_stop()):
+                while summary is None and attempts < 1 + RETRIES:
                     attempts += 1
                     if attempts > 1:
                         log.say(f"  {topo.name} {config} {preset}: attempt {attempts - 1} failed or hung - retrying once")
@@ -313,11 +306,6 @@ def run_load_tests(out, plan, log, should_stop=None, progress=None):
                     with contextlib.redirect_stdout(buf):
                         summary = rb.run_one(config, preset, params, prefix.parent, timeout_s=watchdog_seconds(params))
                     log.write(buf.getvalue())
-                if should_stop and should_stop():
-                    if progress:
-                        progress("done", (setup, rep, config, preset), None)
-                    log.say(f"stopped during {topo.name} {config} {preset} (not marked done)")
-                    break
                 Path(f"{prefix}.done").write_text(json.dumps({"summary": summary, "params": params, "attempts": attempts,
                                                                "seconds": round(time.monotonic() - t0, 1)}))
                 done_now += 1
@@ -329,19 +317,15 @@ def run_load_tests(out, plan, log, should_stop=None, progress=None):
                     state += " (on the retry)"
                 log.say(f"[{done_now}/{len(todo)}] {topo.name} rep{rep} {config:<16} {preset:<18} {state}"
                         f"  | ~{fmt_hours(left * rate)} left")
-                if progress:
-                    progress("done", (setup, rep, config, preset), summary)
         finally:
             topology.clear()
     return done_now
 
 
-def run_staleness(out, plan, log, should_stop=None):
+def run_staleness(out, plan, log):
     from benchmark import staleness_test
 
     for setup in plan.staleness_setups:
-        if should_stop and should_stop():
-            break
         path = Path(out) / f"staleness_{topology.by_name(setup).name}.csv"
         if path.exists():
             log.say(f"staleness {setup}: already done")

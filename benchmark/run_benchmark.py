@@ -132,30 +132,16 @@ def _kill_tree(proc):
         proc.kill()
 
 
-_current = None  # the Locust process running now (for stop_current)
-
-
-def stop_current():
-    """Kill the Locust run in progress, if any (the dashboard's Stop); run_one then returns None."""
-    proc = _current
-    if proc is not None and proc.poll() is None:
-        _kill_tree(proc)
-
-
 def _run_with_watchdog(cmd, env, timeout_s):
     """subprocess.run(...) that kills the whole process tree after timeout_s.
     Returns a CompletedProcess, or None if it had to be killed."""
-    global _current
     proc = subprocess.Popen(cmd, cwd=REPO_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    _current = proc
     try:
         out, err = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired:
         _kill_tree(proc)
         proc.communicate()
         return None
-    finally:
-        _current = None
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
@@ -189,7 +175,6 @@ def run_one(config, preset, params, results_dir=RESULTS_DIR, timeout_s=None):
         "-r", str(params["spawn_rate"]),
         "-t", params["duration"],
         "--csv", str(csv_prefix),
-        "--csv-full-history",  # read / write rows in _stats_history.csv too (the dashboard's live charts)
         "--only-summary",
         # failed requests are counted from the stats CSV; a non-zero exit then means Locust itself broke
         "--exit-code-on-error", "0",

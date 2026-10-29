@@ -1,14 +1,12 @@
-"""Dashboard for the adaptive layer. Live tab: knobs for the traffic, live charts of what the layer
-decides and what it costs. Evaluation tab: the full evaluation (every fixed setting and the
-adaptive layer), planned with a time estimate, followed live, results as each run finishes.
+"""Live dashboard for the adaptive layer: knobs for the traffic, live charts of what the layer
+decides and what it costs. The full evaluation runs from the terminal (benchmark/signals_eval.py).
 
     .venv\\Scripts\\python -m dashboard.server            # then open http://localhost:8000
     .venv\\Scripts\\python -m dashboard.server --port 8050
 
 The engine (dashboard/engine.py) runs in this process, started and stopped from the page. The
 knobs live here too, so they keep their values while the engine is stopped and a new engine
-starts with them. The evaluation runs here too (dashboard/evaluation.py); only one of the two
-uses the cluster at a time. The page gets a snapshot every second over the /ws WebSocket.
+starts with them. The page gets a snapshot every second over the /ws WebSocket.
 """
 
 import argparse
@@ -25,7 +23,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from dashboard import evaluation, presets
+from dashboard import presets
 from dashboard.engine import Engine, Knobs
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -47,8 +45,6 @@ class Runner:
         with self._lock:
             if self.status != "stopped":
                 raise RuntimeError(f"engine is {self.status}")
-            if evaluator.running:
-                raise RuntimeError("an evaluation is running: stop it first (both use the cluster)")
             self.engine = Engine(knobs)
             self.status, self.error, self.message = "starting", None, "Starting ..."
             self.thread = threading.Thread(target=self._run, args=(self.engine,), daemon=True, name="engine")
@@ -89,17 +85,14 @@ class Runner:
 
 knobs = Knobs()
 runner = Runner()
-evaluator = evaluation.EvalRunner(is_busy=lambda: runner.status != "stopped")
 
 
 @contextlib.asynccontextmanager
 async def lifespan(app):
     yield
     runner.stop()
-    evaluator.stop()
-    for thread in (runner.thread, evaluator.thread):
-        if thread is not None:
-            await asyncio.to_thread(thread.join, 30)
+    if runner.thread is not None:
+        await asyncio.to_thread(runner.thread.join, 30)
 
 
 app = FastAPI(title="Adaptive consistency dashboard", lifespan=lifespan)
@@ -127,7 +120,7 @@ def _payload(full_history=False, since=None):
     if not full_history:
         history = [p for p in history if since is None or p["t"] > since]
     return {"engine": runner.state(), "control": knobs.snapshot(), "snapshot": e.latest if e else None,
-            "history": history, "eval": evaluator.state()}
+            "history": history}
 
 
 @app.get("/api/state")
@@ -175,57 +168,6 @@ def export_csv():
         writer.writerows(rows)
     name = time.strftime("live_dashboard_%Y%m%d_%H%M%S.csv")
     return Response(out.getvalue(), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={name}"})
-
-
-# --- evaluation tab ---
-
-@app.get("/api/eval/options")
-def eval_options():
-    return {**evaluation.options(), "runs": evaluation.past_runs()}
-
-
-@app.post("/api/eval/estimate")
-def eval_estimate(plan: dict):
-    try:
-        return evaluation.estimate(evaluation.plan_from(plan))
-    except (ValueError, TypeError) as e:
-        raise HTTPException(400, str(e)) from e
-
-
-@app.post("/api/eval/start")
-def eval_start(body: dict):
-    try:
-        evaluator.start(body.get("plan"), tag=body.get("tag"))
-    except (ValueError, TypeError, FileNotFoundError) as e:
-        raise HTTPException(400, str(e)) from e
-    except RuntimeError as e:
-        raise HTTPException(409, str(e)) from e
-    return evaluator.state()
-
-
-@app.post("/api/eval/stop")
-def eval_stop():
-    evaluator.stop()
-    return evaluator.state()
-
-
-@app.post("/api/eval/view")
-def eval_view(body: dict):
-    try:
-        evaluator.view(body["tag"])
-    except (KeyError, FileNotFoundError) as e:
-        raise HTTPException(404, f"no run {body.get('tag')!r}") from e
-    except RuntimeError as e:
-        raise HTTPException(409, str(e)) from e
-    return evaluator.state()
-
-
-@app.get("/api/eval/figure/{tag}/{name}")
-def eval_figure(tag: str, name: str):
-    path = (evaluation.ev.out_dir_for(tag) / "figs" / name).resolve()
-    if path.parent.parent.parent != evaluation.ev.EVAL_ROOT.resolve() or path.suffix != ".png" or not path.exists():
-        raise HTTPException(404, "no such figure")
-    return FileResponse(path)
 
 
 @app.websocket("/ws")
