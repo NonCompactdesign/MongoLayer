@@ -1,7 +1,6 @@
 pymongo
-pytest
 pandas
 matplotlib
 locust
-ipykernel
-nbclient
+fastapi
+uvicorn[standard]

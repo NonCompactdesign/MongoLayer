@@ -1,7 +1,3 @@
-# Node
-node_modules/
-package-lock.json
-
 # Python
 __pycache__/
 *.pyc
@@ -15,6 +11,7 @@ results/latency_*/
 results/write_share_eval/
 results/signals_eval/
 results/final_eval/
+results/live_*.json
 
 # OS cruft
 .DS_Store

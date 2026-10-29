@@ -15,7 +15,7 @@ FULL_OVERRIDES/QUICK_OVERRIDES below) because their signal specifically
 depends on a different load shape, not just a different read/write mix.
 
 Every (config x preset) matrix is repeated at each injected inter-node
-latency level (see benchmark/netem.py for the levels and their sources) and
+latency level (see testbed/netem.py for the levels and their sources) and
 the whole sweep is repeated --repeats times, to report spread and not a single
 run. Results land in results/write_share_eval/latency_<N>ms/rep<k>/ (a new
 folder so the earlier single-run results in results/ are never overwritten).
@@ -23,20 +23,20 @@ Adaptive runs also write <config>_<preset>_switches.csv: what settings the
 feedback loop chose and when. Every run writes <config>_<preset>_probe.csv: the
 stale-read tally of the staleness probes mixed into the traffic (benchmark/probe_log.py).
 
-Configurations: static_fast, static_moderate, static_safe (fixed settings), adaptive (the
-traffic rule alone) and adaptive_signals (traffic rule + hysteresis + SAFE latency budget +
-per-key read-your-own-writes, adaptive_layer/rules.py and client.py).
---topology T1 T2 runs on unequal client/node distances (benchmark/topology.py) instead of
-the equal --latency levels, after pinning the primary to mongo1 (benchmark/cluster.py);
+Configurations: static_fast, static_moderate, static_safe (fixed settings) and adaptive_signals
+(the adaptive layer: traffic rule + hysteresis + SAFE latency budget + per-key
+read-your-own-writes, adaptive_layer/rules.py and client.py).
+--topology T1 T2 runs on unequal client/node distances (testbed/topology.py) instead of
+the equal --latency levels, after pinning the primary to mongo1 (testbed/cluster.py);
 those results land in results/signals_eval/topology_<name>/rep<k>/.
 
 Usage:
-    python benchmark/run_benchmark.py --quick                  # fast iteration, 1 repeat
-    python benchmark/run_benchmark.py --topology T1 --configs static_fast adaptive_signals \
+    python -m benchmark.run_benchmark --quick                  # fast iteration, 1 repeat
+    python -m benchmark.run_benchmark --topology T1 --configs static_fast adaptive_signals \
         --presets READ_HEAVY --duration 60s --repeats 1        # one small targeted run
-    python benchmark/run_benchmark.py --latency 0 5            # only these one-way delays (ms)
-    python benchmark/run_benchmark.py --repeats 3              # full-length run, 3 repeats (default)
-    python benchmark/run_benchmark.py --duration-scale 0.4     # shorter runs (300 s -> 120 s)
+    python -m benchmark.run_benchmark --latency 0 5            # only these one-way delays (ms)
+    python -m benchmark.run_benchmark --repeats 3              # full-length run, 3 repeats (default)
+    python -m benchmark.run_benchmark --duration-scale 0.4     # shorter runs (300 s -> 120 s)
 
 Each combination runs as a separate `locust` subprocess rather than being
 imported in-process - locust monkey-patches ssl via gevent on import, which
@@ -52,14 +52,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from benchmark import netem, topology
+from testbed import netem, topology
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCUSTFILE = REPO_ROOT / "benchmark" / "locustfile.py"
 RESULTS_DIR = REPO_ROOT / "results"
 
-CONFIGS = ["static_fast", "static_moderate", "static_safe", "adaptive", "adaptive_signals"]
-ADAPTIVE_CONFIGS = ("adaptive", "adaptive_signals")  # the ones with a feedback loop (and a switch log)
+CONFIGS = ["static_fast", "static_moderate", "static_safe", "adaptive_signals"]
+ADAPTIVE_CONFIGS = ("adaptive_signals",)  # the ones with a feedback loop (and a switch log)
 PRESETS = [
     "READ_HEAVY", "WRITE_HEAVY", "MIXED_BURSTY",
     "BALANCED", "HOTSPOT", "RAMP", "SPIKE", "HIGH_CONCURRENCY", "MODEST_WRITES", "READ_HEAVY_HOTSPOT",
@@ -132,16 +132,30 @@ def _kill_tree(proc):
         proc.kill()
 
 
+_current = None  # the Locust process running now (for stop_current)
+
+
+def stop_current():
+    """Kill the Locust run in progress, if any (the dashboard's Stop); run_one then returns None."""
+    proc = _current
+    if proc is not None and proc.poll() is None:
+        _kill_tree(proc)
+
+
 def _run_with_watchdog(cmd, env, timeout_s):
     """subprocess.run(...) that kills the whole process tree after timeout_s.
     Returns a CompletedProcess, or None if it had to be killed."""
+    global _current
     proc = subprocess.Popen(cmd, cwd=REPO_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    _current = proc
     try:
         out, err = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired:
         _kill_tree(proc)
         proc.communicate()
         return None
+    finally:
+        _current = None
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
@@ -175,6 +189,7 @@ def run_one(config, preset, params, results_dir=RESULTS_DIR, timeout_s=None):
         "-r", str(params["spawn_rate"]),
         "-t", params["duration"],
         "--csv", str(csv_prefix),
+        "--csv-full-history",  # read / write rows in _stats_history.csv too (the dashboard's live charts)
         "--only-summary",
         # failed requests are counted from the stats CSV; a non-zero exit then means Locust itself broke
         "--exit-code-on-error", "0",
@@ -295,7 +310,7 @@ def main():
     repeats = args.repeats if args.repeats is not None else (1 if args.quick else 3)
 
     if args.topology:
-        from benchmark import cluster
+        from testbed import cluster
         cluster.pin_primary()  # "far from the primary" needs a known primary
         levels = [(None, topology.by_name(name)) for name in args.topology]
     else:

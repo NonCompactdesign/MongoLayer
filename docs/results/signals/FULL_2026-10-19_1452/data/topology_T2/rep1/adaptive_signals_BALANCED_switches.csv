@@ -1,4 +1,0 @@
-event,seconds,settings,write_share,reads,writes,reason
-start,0.0,MODERATE,,,,client default
-switch,5.015,SAFE,0.5093,527,547,write share 0.51 > 0.40
-stop,179.131,SAFE,,,,

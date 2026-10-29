@@ -8,7 +8,7 @@ happening automatically.
 
 One User class, one shared AdaptiveClient/Monitor/FeedbackLoop for the
 whole test (not one per simulated user - pymongo's MongoClient is meant to
-be shared and pooled, and "adaptive" mode specifically needs everyone
+be shared and pooled, and the adaptive mode specifically needs everyone
 observing/reacting to the SAME aggregate traffic pattern, not N independent
 copies of it). Shared state lives on `environment` via test_start/test_stop
 listeners, which is the idiomatic Locust pattern for this.
@@ -16,10 +16,10 @@ listeners, which is the idiomatic Locust pattern for this.
 Configuration is via environment variables so Phase 9's run_benchmark.py
 can drive this file across configurations/presets without editing code:
 
-  BENCHMARK_MODE     static_fast | static_moderate | static_safe | adaptive | adaptive_signals
-                     (default: adaptive). adaptive = the traffic rule alone; adaptive_signals =
-                     traffic rule + hysteresis + the SAFE latency budget (adaptive_layer/rules.py) +
-                     per-key read-your-own-writes (see BENCHMARK_READ_OWN_WRITES).
+  BENCHMARK_MODE     static_fast | static_moderate | static_safe | adaptive_signals
+                     (default: adaptive_signals = the adaptive layer: traffic rule + hysteresis +
+                     the SAFE latency budget (adaptive_layer/rules.py) + per-key
+                     read-your-own-writes (see BENCHMARK_READ_OWN_WRITES)).
   WORKLOAD_PRESET    READ_HEAVY | WRITE_HEAVY | MIXED_BURSTY | BALANCED | HOTSPOT |
                      RAMP | SPIKE | HIGH_CONCURRENCY | MODEST_WRITES | READ_HEAVY_HOTSPOT
                      (default: MIXED_BURSTY)
@@ -50,14 +50,13 @@ from adaptive_layer.client import AdaptiveClient
 from adaptive_layer.decision import FAST_SETTINGS, MODERATE_SETTINGS, SAFE_SETTINGS, settings_name
 from adaptive_layer.feedback import FeedbackLoop
 from adaptive_layer.monitor import AccessPatternMonitor
-from adaptive_layer.rules import SIGNALS_THRESHOLDS, SignalConfig
 from benchmark.probe_log import ProbeTally
 from benchmark.switch_log import write_switch_log
 
 URI = "mongodb://mongo1:27017,mongo2:27018,mongo3:27019/?replicaSet=rs0"
 DB_NAME = "benchmark"
 
-MODE = os.environ.get("BENCHMARK_MODE", "adaptive")
+MODE = os.environ.get("BENCHMARK_MODE", "adaptive_signals")
 PRESET = os.environ.get("WORKLOAD_PRESET", "MIXED_BURSTY")
 COLLECTION = os.environ.get("BENCHMARK_COLLECTION", "bench")
 KEY_SPACE = int(os.environ.get("BENCHMARK_KEY_SPACE", "1000"))
@@ -167,15 +166,9 @@ def on_test_start(environment, **kwargs):
         client.set_active_settings(COLLECTION, MODERATE_SETTINGS)
     elif MODE == "static_safe":
         client.set_active_settings(COLLECTION, SAFE_SETTINGS)
-    elif MODE == "adaptive":
-        feedback_loop = FeedbackLoop(
-            client, monitor, interval_seconds=INTERVAL_SECONDS, cooldown_seconds=COOLDOWN_SECONDS
-        )
-        feedback_loop.start()
     elif MODE == "adaptive_signals":
         feedback_loop = FeedbackLoop(
-            client, monitor, interval_seconds=INTERVAL_SECONDS, cooldown_seconds=COOLDOWN_SECONDS,
-            thresholds=SIGNALS_THRESHOLDS, signals=SignalConfig(),
+            client, monitor, interval_seconds=INTERVAL_SECONDS, cooldown_seconds=COOLDOWN_SECONDS
         )
         feedback_loop.start()
     else:
@@ -217,7 +210,7 @@ class AdaptiveMongoUser(User):
     """One simulated concurrent caller. Reuses the shared client/monitor
     set up in on_test_start rather than opening its own connection -
     correct because pymongo's MongoClient is meant to be shared/pooled,
-    and required for "adaptive" mode so every user observes and reacts to
+    and required for the adaptive mode so every user observes and reacts to
     the same aggregate access pattern."""
 
     wait_time = constant_throughput(OPS_PER_SEC_PER_USER)

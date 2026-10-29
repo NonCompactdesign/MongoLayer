@@ -13,9 +13,10 @@ Five scenarios measured:
   static_moderate - MODERATE_SETTINGS permanently active (w=1, primary reads): the
                    cheapest setting that never reads from a secondary
   static_safe    - SAFE_SETTINGS permanently active, no adaptation
-  adaptive_hot   - real FeedbackLoop, warmed into its SAFE_SETTINGS branch
+  adaptive_hot   - the adaptive layer (all rules, read-your-own-writes on the marker), warmed
+                   into its SAFE_SETTINGS branch
                    (write-heavy: high write share) before measuring
-  adaptive_cold  - real FeedbackLoop, warmed into its FAST_SETTINGS branch
+  adaptive_cold  - the same, warmed into its FAST_SETTINGS branch
                    (read-heavy: low write share) before measuring, and kept
                    there throughout measurement via filler reads between
                    trials (a bare write+read trial loop is 50% writes, which
@@ -26,13 +27,11 @@ Each trial also records which settings were actually in force when its read
 ran, so the output states how many trials really ran under the intended
 settings instead of leaving that to inference (in_expected_settings).
 
-Expectation (from the project's design rationale): adaptive_hot's staleness
-rate should land close to static_safe's, and adaptive_cold's should land
-close to static_fast's - i.e. the adaptive layer's rate sits between the
-two static baselines *in the direction its current settings would predict*,
-not literally "always in the middle."
+Expectation: adaptive_hot's staleness rate lands close to static_safe's (0). adaptive_cold
+runs in FAST, where static_fast misses many read-backs, but read-your-own-writes sends the
+read of a marker the client just wrote to the primary, so it should be close to 0 as well.
 
-Repeated at each injected inter-node latency level (benchmark/netem.py) and
+Repeated at each injected inter-node latency level (testbed/netem.py) and
 for --repeats repeats; results land in
 results/write_share_eval/latency_<N>ms/rep<k>/staleness.csv.
 
@@ -50,7 +49,7 @@ import uuid
 from pathlib import Path
 
 from adaptive_layer.client import AdaptiveClient
-from benchmark import netem
+from testbed import netem
 from benchmark.run_benchmark import results_dir_for
 from adaptive_layer.decision import FAST_SETTINGS, MODERATE_SETTINGS, SAFE_SETTINGS
 from adaptive_layer.feedback import FeedbackLoop
@@ -68,6 +67,18 @@ FULL_TRIALS = 200
 QUICK_TRIALS = 40
 COLD_TRIAL_SPACING_SECONDS = 2  # gives secondaries time to catch up between isolated writes
 COLD_FILLER_READS_PER_TRIAL = 9  # 1 write per 11 operations (~9% writes), comfortably under LOW_WRITE_SHARE (0.15)
+READ_OWN_WRITES_SECONDS = 5.0  # as in the dashboard and the load tests
+
+
+def _adaptive():
+    """A client + running feedback loop with all the rules; the trials' marker is the key that
+    read-your-own-writes remembers."""
+    monitor = AccessPatternMonitor(window_seconds=WINDOW_SECONDS)
+    client = AdaptiveClient(URI, DB_NAME, monitor=monitor, verbose=False, key_field="marker",
+                            read_own_writes_seconds=READ_OWN_WRITES_SECONDS)
+    loop = FeedbackLoop(client, monitor, interval_seconds=INTERVAL_SECONDS, cooldown_seconds=COOLDOWN_SECONDS)
+    loop.start()
+    return client, loop
 
 
 def _wait_until_settings(client, collection, expected, timeout=15, poll_interval=0.2):
@@ -109,10 +120,7 @@ def measure_static(config_name, settings, collection, trials):
 def measure_adaptive_hot(collection, trials, warmup_writes=60):
     print(f"\n--- adaptive_hot ({trials} trials) ---")
     print(f"Warming up: {warmup_writes} writes to push the write share above HIGH_WRITE_SHARE...")
-    monitor = AccessPatternMonitor(window_seconds=WINDOW_SECONDS)
-    client = AdaptiveClient(URI, DB_NAME, monitor=monitor, verbose=False)
-    loop = FeedbackLoop(client, monitor, interval_seconds=INTERVAL_SECONDS, cooldown_seconds=COOLDOWN_SECONDS)
-    loop.start()
+    client, loop = _adaptive()
     try:
         for i in range(warmup_writes):
             client.write(collection, {"warmup": i})
@@ -137,10 +145,7 @@ def measure_adaptive_hot(collection, trials, warmup_writes=60):
 def measure_adaptive_cold(collection, trials, warmup_reads=30):
     print(f"\n--- adaptive_cold ({trials} trials, spaced {COLD_TRIAL_SPACING_SECONDS}s apart - this takes a while) ---")
     print(f"Warming up: seed write + {warmup_reads} reads to push the write share below LOW_WRITE_SHARE...")
-    monitor = AccessPatternMonitor(window_seconds=WINDOW_SECONDS)
-    client = AdaptiveClient(URI, DB_NAME, monitor=monitor, verbose=False)
-    loop = FeedbackLoop(client, monitor, interval_seconds=INTERVAL_SECONDS, cooldown_seconds=COOLDOWN_SECONDS)
-    loop.start()
+    client, loop = _adaptive()
     try:
         client.write(collection, {"seed": True})
         for _ in range(warmup_reads):

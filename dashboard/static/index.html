@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Adaptive Consistency Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>Adaptive Consistency Layer</h1>
+      <span class="sub">MongoDB replica set</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab on" data-tab="live" role="tab">Live demo</button>
+      <button class="tab" data-tab="eval" role="tab">Evaluation <span id="eval-tab-pill" class="tab-pill" hidden></span></button>
+    </nav>
+    <div class="engine" id="live-controls">
+      <span id="engine-pill" class="pill">stopped</span>
+      <span id="engine-msg" class="muted"></span>
+      <button id="btn-start" class="primary">Start engine</button>
+      <button id="btn-stop">Stop engine</button>
+      <a id="btn-export" class="button" href="/api/export.csv">Export CSV</a>
+    </div>
+  </header>
+  <div id="engine-error" class="error" hidden></div>
+
+  <div class="layout" id="tab-live">
+    <aside class="knobs">
+      <section>
+        <h2>Load</h2>
+        <label class="knob">
+          <span>Target rate <b id="v-ops"></b></span>
+          <input id="k-ops" type="range" min="0" max="1000" step="10">
+          <input id="k-ops-num" type="number" min="0" max="5000" step="10" class="num">
+        </label>
+        <label class="knob">
+          <span>Write share <b id="v-ws"></b></span>
+          <input id="k-ws" type="range" min="0" max="100" step="1">
+          <small class="muted">Lowest reachable ≈ probe fraction (probe writes count).</small>
+        </label>
+        <button id="btn-pause" class="wide">Pause traffic</button>
+      </section>
+
+      <section>
+        <h2>Keys</h2>
+        <label class="knob">
+          <span>Hot keys <b id="v-hot"></b></span>
+          <input id="k-hot" type="range" min="0" max="100" step="1">
+          <small class="muted">0 = uniform; N = 80% of operations on N keys.</small>
+        </label>
+        <label class="knob">
+          <span>Key space</span>
+          <input id="k-keys" type="number" min="100" max="100000" step="100" class="num">
+        </label>
+      </section>
+
+      <section>
+        <h2>Consistency checks</h2>
+        <label class="knob">
+          <span>Probe fraction <b id="v-probe"></b></span>
+          <input id="k-probe" type="range" min="0" max="20" step="1">
+        </label>
+        <label class="toggle">
+          <input id="k-ryw" type="checkbox">
+          <span>Read-your-own-writes</span>
+        </label>
+      </section>
+
+      <section>
+        <h2>Topology</h2>
+        <div id="k-topo" class="segmented"></div>
+        <small id="topo-desc" class="muted"></small>
+      </section>
+
+      <section>
+        <h2>Scenarios</h2>
+        <div id="presets" class="presets"></div>
+      </section>
+    </aside>
+
+    <main>
+      <section class="tiles">
+        <div class="tile tile-setting">
+          <div class="label">Active setting</div>
+          <div id="t-setting" class="badge">–</div>
+          <div id="t-setting-detail" class="detail mono">–</div>
+        </div>
+        <div class="tile"><div class="label">Throughput</div><div class="value" id="t-ops">–</div><div class="detail" id="t-ops-d"></div></div>
+        <div class="tile"><div class="label">Write share</div><div class="value" id="t-ws">–</div><div class="detail" id="t-ws-d"></div></div>
+        <div class="tile"><div class="label">Read p95</div><div class="value" id="t-rp95">–</div><div class="detail" id="t-rp95-d"></div></div>
+        <div class="tile"><div class="label">Write p95</div><div class="value" id="t-wp95">–</div><div class="detail" id="t-wp95-d"></div></div>
+        <div class="tile"><div class="label">Stale reads</div><div class="value" id="t-stale">–</div><div class="detail" id="t-stale-d"></div></div>
+        <div class="tile"><div class="label">Reads sent to primary</div><div class="value" id="t-redir">–</div><div class="detail">by read-your-own-writes</div></div>
+        <div class="tile"><div class="label">Switches</div><div class="value" id="t-sw">–</div><div class="detail" id="t-sw-d"></div></div>
+        <div class="tile"><div class="label">Errors</div><div class="value" id="t-err">–</div><div class="detail" id="t-err-d"></div></div>
+      </section>
+
+      <div class="decision">
+        <span class="label">Latest decision</span>
+        <span id="decision" class="mono">–</span>
+      </div>
+
+      <div class="span-bar">
+        <span class="muted">Time span</span>
+        <div id="span" class="segmented small">
+          <button data-span="120">2 min</button>
+          <button data-span="300" class="on">5 min</button>
+          <button data-span="600">10 min</button>
+          <button data-span="900">15 min</button>
+        </div>
+        <span class="muted legend-inline">
+          <i class="sw fast"></i>FAST <i class="sw moderate"></i>MODERATE <i class="sw safe"></i>SAFE
+          · vertical lines mark switches
+        </span>
+      </div>
+
+      <section class="charts">
+        <figure class="card full">
+          <figcaption>Active setting over time</figcaption>
+          <div id="c-setting" class="chart short"></div>
+        </figure>
+        <figure class="card">
+          <figcaption>Write share vs decision bands <small class="muted">15 s window; dashed = hysteresis exits</small></figcaption>
+          <div id="c-share" class="chart"></div>
+        </figure>
+        <figure class="card">
+          <figcaption>Throughput <small class="muted">ops/s, last 5 s; dashed = target</small></figcaption>
+          <div id="c-ops" class="chart"></div>
+        </figure>
+        <figure class="card">
+          <figcaption>Read latency <small class="muted">ms, log scale, last 5 s</small></figcaption>
+          <div id="c-read" class="chart"></div>
+        </figure>
+        <figure class="card">
+          <figcaption>Write latency <small class="muted">ms, log scale; dashed = SAFE budget</small></figcaption>
+          <div id="c-write" class="chart"></div>
+        </figure>
+        <figure class="card">
+          <figcaption>Stale-probe rate <small class="muted">% of immediate read-backs that missed, 15 s window</small></figcaption>
+          <div id="c-stale" class="chart"></div>
+        </figure>
+        <figure class="card">
+          <figcaption>Latency by setting <small class="muted">since the last topology change</small></figcaption>
+          <div id="by-setting" class="bysetting"></div>
+        </figure>
+        <figure class="card">
+          <figcaption>Topology <small class="muted" id="topo-name"></small></figcaption>
+          <div id="topo-map" class="topo"></div>
+        </figure>
+        <figure class="card">
+          <figcaption>Latency budget</figcaption>
+          <div id="budget" class="budget"></div>
+        </figure>
+      </section>
+
+      <section class="card log">
+        <h2>Switches and traffic changes</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Time</th><th>Event</th><th>Write share</th><th>Reason / change</th></tr></thead>
+            <tbody id="log"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="layout" id="tab-eval" hidden>
+    <aside class="knobs">
+      <section>
+        <h2>Profile</h2>
+        <div id="ev-profiles" class="segmented"></div>
+        <small class="muted">Fills the plan below; then tune anything.</small>
+      </section>
+      <section>
+        <h2>Network setups</h2>
+        <div id="ev-setups" class="checks"></div>
+      </section>
+      <section>
+        <h2>Configurations</h2>
+        <div id="ev-configs" class="checks"></div>
+      </section>
+      <section>
+        <h2>Workloads</h2>
+        <div id="ev-presets" class="checks"></div>
+      </section>
+      <section>
+        <h2>Run length</h2>
+        <label class="toggle"><input id="ev-fixed-on" type="checkbox"><span>Same length for every run</span></label>
+        <label class="knob" id="ev-scale-wrap">
+          <span>Scale of full length <b id="ev-scale-v"></b></span>
+          <input id="ev-scale" type="range" min="0.1" max="1" step="0.05">
+          <small class="muted">Full lengths are 180–300 s per workload; minimum 30 s.</small>
+        </label>
+        <label class="knob" id="ev-fixed-wrap" hidden>
+          <span>Seconds per run</span>
+          <input id="ev-fixed" type="number" min="10" max="900" step="5" class="num">
+        </label>
+        <label class="knob">
+          <span>Repeats</span>
+          <input id="ev-repeats" type="number" min="1" max="10" step="1" class="num">
+        </label>
+      </section>
+      <section>
+        <h2>Checks and staleness</h2>
+        <label class="toggle"><input id="ev-checks" type="checkbox"><span>Live rule checks first (~2 min)</span></label>
+        <div class="sub-h">Staleness experiment on</div>
+        <div id="ev-stale-setups" class="checks"></div>
+        <label class="knob">
+          <span>Trials per scenario</span>
+          <input id="ev-trials" type="number" min="1" max="1000" step="10" class="num">
+        </label>
+      </section>
+    </aside>
+
+    <main>
+      <section class="card ev-plan">
+        <div class="ev-plan-head">
+          <div>
+            <div class="label">Estimated time</div>
+            <div class="value" id="ev-est-total">–</div>
+            <div class="detail" id="ev-est-detail"></div>
+          </div>
+          <div class="ev-actions">
+            <button id="ev-start" class="primary">Start full run</button>
+            <button id="ev-stop">Stop</button>
+          </div>
+        </div>
+        <table class="ev-est-table"><tbody id="ev-est-rows"></tbody></table>
+        <div class="ev-runs">
+          <span class="muted">Earlier runs</span>
+          <select id="ev-runs"></select>
+          <button id="ev-view">View</button>
+          <button id="ev-resume">Resume</button>
+        </div>
+      </section>
+
+      <section class="tiles">
+        <div class="tile"><div class="label">Status</div><div class="value" id="ev-status">idle</div><div class="detail" id="ev-tag"></div></div>
+        <div class="tile"><div class="label">Phase</div><div class="value small" id="ev-phase">–</div><div class="detail" id="ev-phase-d"></div></div>
+        <div class="tile"><div class="label">Runs done</div><div class="value" id="ev-done">–</div><div class="detail" id="ev-done-d"></div></div>
+        <div class="tile"><div class="label">Elapsed</div><div class="value" id="ev-elapsed">–</div><div class="detail">since start</div></div>
+        <div class="tile"><div class="label">Remaining</div><div class="value" id="ev-remaining">–</div><div class="detail" id="ev-finish"></div></div>
+      </section>
+      <div class="progress"><div id="ev-bar"></div></div>
+      <div id="ev-error" class="error" hidden></div>
+
+      <section class="card">
+        <figcaption>Run in progress <small class="muted" id="ev-cur-label"></small></figcaption>
+        <div class="ev-cur-grid">
+          <div><div class="sub-h">Throughput (req/s)</div><div id="ev-c-rps" class="chart"></div></div>
+          <div><div class="sub-h">Latency (ms, log) — read / write p50 and p95, rolling</div><div id="ev-c-lat" class="chart"></div></div>
+        </div>
+      </section>
+
+      <section class="charts">
+        <figure class="card"><figcaption>Preflight and live checks</figcaption><div id="ev-checks-list" class="checklist"></div></figure>
+        <figure class="card"><figcaption>Staleness experiment <small class="muted">stale read-backs, %</small></figcaption><div id="ev-stale"></div></figure>
+      </section>
+
+      <section class="card">
+        <div class="ev-res-head">
+          <h2>Results by setup</h2>
+          <div class="segmented small" id="ev-metric">
+            <button data-metric="read_p50" class="on">Read p50</button>
+            <button data-metric="read_p95">Read p95</button>
+            <button data-metric="write_p50">Write p50</button>
+            <button data-metric="write_p95">Write p95</button>
+            <button data-metric="stale_pct">Stale %</button>
+          </div>
+        </div>
+        <div id="ev-legend" class="ev-legend"></div>
+        <div id="ev-bars"></div>
+      </section>
+
+      <section class="card">
+        <h2>Where the adaptive layer spent its time</h2>
+        <div id="ev-settings"></div>
+      </section>
+
+      <section class="card log">
+        <h2>Finished runs</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Setup</th><th>Config</th><th>Workload</th><th>Requests</th><th>Fail</th><th>Read p50 / p95</th><th>Write p50 / p95</th><th>Stale probes</th><th>FAST / MOD / SAFE</th><th>Switches</th></tr></thead>
+            <tbody id="ev-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" id="ev-analysis-card" hidden>
+        <h2>Integrity and expectations</h2>
+        <div id="ev-analysis"></div>
+        <div id="ev-figs" class="ev-figs"></div>
+      </section>
+
+      <section class="card log">
+        <h2>Log</h2>
+        <pre id="ev-log" class="ev-log"></pre>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
+  <script src="/static/app.js"></script>
+  <script src="/static/eval.js"></script>
+</body>
+</html>

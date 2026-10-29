@@ -1,4 +1,8 @@
-"""One evaluation run of the signal rules, driven from signals_evaluation.ipynb (or from Python).
+"""One evaluation run of the signal rules (the full evaluation, ~3 h 45 min with profile FULL).
+
+    python -m benchmark.signals_eval                     # profile FULL
+    python -m benchmark.signals_eval --profile SMOKE     # ~14 min, to check the pipeline
+    python -m benchmark.signals_eval --tag <tag>         # resume an interrupted run
 
 A run has a Plan (which network setups, configurations, presets, run lengths, repeats) and one
 output folder, results/signals_eval/<tag>/:
@@ -15,7 +19,7 @@ output folder, results/signals_eval/<tag>/:
 Every load-test run leaves a .done marker, so a run that is interrupted (laptop asleep, Docker
 restart) continues where it stopped: run it again with the same tag and finished runs are skipped.
 
-Setups are topologies (benchmark/topology.py): EQUAL-<ms> are equal-distance levels (one way
+Setups are topologies (testbed/topology.py): EQUAL-<ms> are equal-distance levels (one way
 between nodes, client equidistant), T1 and T2 the unequal ones. The default run uses EQUAL-0, T1
 and T2. EQUAL-5 is left out: with these additions the layer behaves at 5 ms as at 0 ms (SAFE stays
 well inside the latency budget), and the 2026-10-19 overnight data already shows what 5 ms changes
@@ -33,16 +37,16 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from benchmark import cluster, netem, run_benchmark as rb, topology
+from benchmark import run_benchmark as rb
+from testbed import cluster, netem, topology
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EVAL_ROOT = REPO_ROOT / "results" / "signals_eval"
-RECORD_ROOT = REPO_ROOT / "docs" / "results" / "signals"
 SETTINGS_NAMES = ("FAST", "MODERATE", "SAFE")
 
 # The default workloads: each shows one addition at work. The other four presets add little here
 # (WRITE_HEAVY and HOTSPOT behave like BALANCED, all SAFE; RAMP only tests a slow ramp-up;
-# HIGH_CONCURRENCY is a load test of the layer itself) and are in the notebook's FULL_ALL profile.
+# HIGH_CONCURRENCY is a load test of the layer itself) and are in the FULL_ALL profile.
 CORE_PRESETS = [
     "READ_HEAVY",          # FAST + per-key read-your-own-writes (#6)
     "READ_HEAVY_HOTSPOT",  # the cost of routing hot keys to the primary (#6)
@@ -125,7 +129,7 @@ def fmt_hours(seconds):
 
 
 class Log:
-    """Writes to run_log.txt; `say` also prints one line to the notebook."""
+    """Writes to run_log.txt; `say` also prints the line."""
 
     def __init__(self, path):
         self.path = Path(path)
@@ -172,7 +176,7 @@ def write_meta(out, plan, **extra):
 
 # --- checks before the long part --------------------------------------------------------------
 
-def preflight(out, run_tests=True):
+def preflight(out):
     """[(check, ok, detail)]. Nothing long should start unless every one is ok."""
     results = []
 
@@ -207,12 +211,6 @@ def preflight(out, run_tests=True):
         ok = rtts["mongo2"] < 20 and rtts["mongo1"] > 60
         return ok, "T1 client round trips " + ", ".join(f"{n} {ms:.1f} ms" for n, ms in rtts.items())
 
-    def tests():
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "--color=no", "-p", "no:cacheprovider"], cwd=REPO_ROOT,
-                           capture_output=True, text=True)
-        last = (r.stdout.strip().splitlines() or ["(no output)"])[-1]
-        return r.returncode == 0, last
-
     def disk():
         import shutil
         free_gb = shutil.disk_usage(REPO_ROOT).free / 1e9
@@ -222,8 +220,6 @@ def preflight(out, run_tests=True):
     check("no leftover network delays", clean_network)
     check("replica set healthy, mongo1 pinned, direct replication", replica_set)
     check("topology T1 can be applied and measured", tc_works)
-    if run_tests:
-        check("test suite passes", tests)
     check("disk space", disk)
     Path(out).mkdir(parents=True, exist_ok=True)
     (Path(out) / "preflight.json").write_text(json.dumps(
@@ -233,7 +229,7 @@ def preflight(out, run_tests=True):
 
 # --- the phases -----------------------------------------------------------------------------------
 
-def run_live_checks(out, log):
+def run_live_checks(out, log, should_stop=None):
     from benchmark import signals_check
 
     path = Path(out) / "checks.json"
@@ -241,6 +237,8 @@ def run_live_checks(out, log):
     cluster.pin_primary()
     try:
         for name, fn in signals_check.SCENARIOS.items():
+            if should_stop and should_stop():
+                break
             if name in results:
                 log.say(f"check {name}: already done ({'PASS' if results[name]['pass'] else 'FAIL'})")
                 continue
@@ -277,7 +275,10 @@ def watchdog_seconds(params):
     return _seconds(params["duration"]) + WATCHDOG_GRACE_S
 
 
-def run_load_tests(out, plan, log):
+def run_load_tests(out, plan, log, should_stop=None, progress=None):
+    """Every load-test run not done yet. should_stop() is checked between runs (a stopped run is
+    not marked done, so a resume runs it again); progress(event, cell, info) is told when each run
+    starts ("start", its Locust params) and ends ("done", its summary or None)."""
     cells = plan.cells()
     todo = [c for c in cells if not is_done(out, *c)]
     log.say(f"load tests: {len(cells)} runs planned, {len(cells) - len(todo)} already done, {len(todo)} to go")
@@ -285,7 +286,7 @@ def run_load_tests(out, plan, log):
     done_now = 0
     for setup in plan.setups:
         mine = [c for c in todo if c[0] == setup]
-        if not mine:
+        if not mine or (should_stop and should_stop()):
             continue
         topo = topology.by_name(setup)
         cluster.pin_primary()
@@ -293,12 +294,16 @@ def run_load_tests(out, plan, log):
         log.say(f"setup {topo.name}: {topo.description}")
         try:
             for (_, rep, config, preset) in mine:
+                if should_stop and should_stop():
+                    break
                 prefix = cell_prefix(out, setup, rep, config, preset)
                 prefix.parent.mkdir(parents=True, exist_ok=True)
                 params = plan.params(preset)
+                if progress:
+                    progress("start", (setup, rep, config, preset), params)
                 t0 = time.monotonic()
                 summary, attempts = None, 0
-                while summary is None and attempts < 1 + RETRIES:
+                while summary is None and attempts < 1 + RETRIES and not (should_stop and should_stop()):
                     attempts += 1
                     if attempts > 1:
                         log.say(f"  {topo.name} {config} {preset}: attempt {attempts - 1} failed or hung - retrying once")
@@ -308,6 +313,11 @@ def run_load_tests(out, plan, log):
                     with contextlib.redirect_stdout(buf):
                         summary = rb.run_one(config, preset, params, prefix.parent, timeout_s=watchdog_seconds(params))
                     log.write(buf.getvalue())
+                if should_stop and should_stop():
+                    if progress:
+                        progress("done", (setup, rep, config, preset), None)
+                    log.say(f"stopped during {topo.name} {config} {preset} (not marked done)")
+                    break
                 Path(f"{prefix}.done").write_text(json.dumps({"summary": summary, "params": params, "attempts": attempts,
                                                                "seconds": round(time.monotonic() - t0, 1)}))
                 done_now += 1
@@ -319,15 +329,19 @@ def run_load_tests(out, plan, log):
                     state += " (on the retry)"
                 log.say(f"[{done_now}/{len(todo)}] {topo.name} rep{rep} {config:<16} {preset:<18} {state}"
                         f"  | ~{fmt_hours(left * rate)} left")
+                if progress:
+                    progress("done", (setup, rep, config, preset), summary)
         finally:
             topology.clear()
     return done_now
 
 
-def run_staleness(out, plan, log):
+def run_staleness(out, plan, log, should_stop=None):
     from benchmark import staleness_test
 
     for setup in plan.staleness_setups:
+        if should_stop and should_stop():
+            break
         path = Path(out) / f"staleness_{topology.by_name(setup).name}.csv"
         if path.exists():
             log.say(f"staleness {setup}: already done")
@@ -433,13 +447,12 @@ def expectations(df):
         n = int(fast_stale.fillna(0).sum()) if fast_stale is not None else None
         add("adaptive_signals: no stale probe while in FAST, in any setup (#6)", None if n is None else n == 0,
             "no data" if n is None else f"{n} stale of {int(sig_all['FAST_probes'].fillna(0).sum())} probes taken in FAST")
-    rh = {c: _cell(df, "T1", c, "READ_HEAVY") for c in ("static_fast", "adaptive", "adaptive_signals")} if not df.empty else {}
+    rh = {c: _cell(df, "T1", c, "READ_HEAVY") for c in ("static_fast", "adaptive_signals")} if not df.empty else {}
     if all(v is not None for v in rh.values()) and rh:
-        sig, ada, fast = rh["adaptive_signals"], rh["adaptive"], rh["static_fast"]
+        sig, fast = rh["adaptive_signals"], rh["static_fast"]
         add("T1 READ_HEAVY: adaptive_signals uses FAST most of the run", sig["FAST_pct"] > 50, f"FAST {sig['FAST_pct']:.0f}% of the run")
-        add("T1 READ_HEAVY: adaptive_signals is less stale than adaptive and static_fast",
-            sig["stale_pct"] <= min(ada["stale_pct"], fast["stale_pct"]) and sig["stale_pct"] < fast["stale_pct"],
-            f"stale {sig['stale_pct']}% vs adaptive {ada['stale_pct']}% / static_fast {fast['stale_pct']}%")
+        add("T1 READ_HEAVY: adaptive_signals is less stale than static_fast", sig["stale_pct"] < fast["stale_pct"],
+            f"stale {sig['stale_pct']}% vs static_fast {fast['stale_pct']}%")
         add("T1 READ_HEAVY: adaptive_signals reads stay local (median < 20 ms)", sig["read_p50"] < 20,
             f"read p50 {sig['read_p50']:.0f} ms (static_moderate reads the 87 ms primary)")
     else:
@@ -470,7 +483,7 @@ def _save(fig, out, name):
 
 
 COLORS = {"static_fast": "#e07b39", "static_moderate": "#8e6bbf", "static_safe": "#3b6ea5",
-          "adaptive": "#2ea043", "adaptive_signals": "#0f7b6c"}
+          "adaptive_signals": "#0f7b6c"}
 SETTING_COLORS = {"FAST": "#e07b39", "MODERATE": "#9aa0a6", "SAFE": "#3b6ea5"}
 
 
@@ -509,24 +522,22 @@ def figure_metric(df, out, column, label, name, log_scale=False, value_labels=Fa
 
 
 def figure_settings(df, out):
-    """Share of each run spent in FAST / MODERATE / SAFE, adaptive vs adaptive_signals."""
+    """Share of each adaptive_signals run spent in FAST / MODERATE / SAFE."""
     import matplotlib.pyplot as plt
 
-    ad = df[df["config"].isin(["adaptive", "adaptive_signals"])].copy()
+    ad = df[df["config"] == "adaptive_signals"].copy()
     setups = list(dict.fromkeys(ad["setup"]))
     fig, axes = plt.subplots(1, len(setups), figsize=(4.4 * len(setups), 0.32 * len(ad) / max(1, len(setups)) + 1.8),
                              squeeze=False, sharey=True)
     presets = [p for p in rb.PRESETS if p in set(ad["preset"])]
-    labels = [f"{p.replace('_', ' ').title()} · {'signals' if c == 'adaptive_signals' else 'traffic'}"
-              for p in presets for c in ("adaptive", "adaptive_signals")]
+    labels = [p.replace("_", " ").title() for p in presets]
     for ax, setup in zip(axes[0], setups):
         left = [0.0] * len(labels)
         for name in SETTINGS_NAMES:
             vals = []
             for p in presets:
-                for c in ("adaptive", "adaptive_signals"):
-                    r = _cell(ad, setup, c, p)
-                    vals.append(0.0 if r is None else float(r.get(f"{name}_pct", 0) or 0))
+                r = _cell(ad, setup, "adaptive_signals", p)
+                vals.append(0.0 if r is None else float(r.get(f"{name}_pct", 0) or 0))
             ax.barh(range(len(labels)), vals, left=left, color=SETTING_COLORS[name], label=name)
             left = [a + b for a, b in zip(left, vals)]
         ax.set_title(setup, fontsize=10)
@@ -566,7 +577,7 @@ def figure_staleness(st, out):
 
 
 def analyse(out, plan):
-    """Load everything, write the tables and figures, return what the notebook displays."""
+    """Load everything, write the tables and figures, return what main() prints."""
     out = Path(out)
     df = load_summary(out)
     st = load_staleness(out)
@@ -584,22 +595,105 @@ def analyse(out, plan):
     return {"summary": df, "staleness": st, "checks": checks, "integrity": integ, "expectations": expect}
 
 
-def store_record(out, tag):
-    """Copy the small, committable part of a run to docs/results/signals/<tag>/ (no Locust history CSVs)."""
-    import shutil
+# --- command line ---------------------------------------------------------------------------------
 
-    out, dest = Path(out), RECORD_ROOT / tag
-    (dest / "data").mkdir(parents=True, exist_ok=True)
-    for name in ("run_meta.json", "preflight.json", "checks.json", "summary.csv", "staleness.csv", "expectations.csv"):
-        if (out / name).exists():
-            shutil.copy2(out / name, dest / "data" / name)
-    if (out / "figs").exists():
-        shutil.copytree(out / "figs", dest / "figs", dirs_exist_ok=True)
-    for path in out.glob("topology_*/rep*/*"):
-        if path.name.endswith(("_switches.csv", "_probe.csv", "_client.json", "_stats.csv")):
-            target = dest / "data" / path.parent.parent.name / path.parent.name / path.name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, target)
-    for path in out.glob("staleness_*.csv"):
-        shutil.copy2(path, dest / "data" / path.name)
-    return dest
+PROFILES = {
+    "FULL": dict(),  # the Plan defaults: 3 setups x 5 configs x 6 core workloads, 0.6 x full length, 1 repeat
+    "FULL_ALL": dict(presets=list(rb.PRESETS)),  # the same with all 10 workloads (~6 h 10 min)
+    "SMOKE": dict(setups=["EQUAL-0", "T1"], presets=["READ_HEAVY", "BALANCED"], fixed_duration_s=30,
+                  staleness_setups=["EQUAL-0"], staleness_trials=20),
+}
+
+
+def write_figures(out, res):
+    """The run's figures in figs/, from what analyse() returned."""
+    import matplotlib
+
+    matplotlib.use("Agg")  # files only, no window
+    import matplotlib.pyplot as plt
+
+    df, st = res["summary"], res["staleness"]
+    if not df.empty:
+        figure_metric(df, out, "read_p50", "read p50 (ms, log)", "read_p50.png", log_scale=True)
+        figure_metric(df, out, "write_p50", "write p50 (ms, log)", "write_p50.png", log_scale=True)
+        figure_metric(df, out, "stale_pct", "stale probes (%)", "stale_probes.png", value_labels=True)
+        figure_settings(df, out)
+    if not st.empty:
+        figure_staleness(st, out)
+    plt.close("all")
+
+
+def main(argv=None):
+    import argparse
+    import datetime as dt
+
+    from benchmark import signals_report
+
+    ap = argparse.ArgumentParser(description="Run the full evaluation of the signal rules (see the module docstring).")
+    ap.add_argument("--profile", choices=sorted(PROFILES), default="FULL")
+    ap.add_argument("--tag", help="resume this run (results/signals_eval/<tag>/) instead of starting a new one")
+    ap.add_argument("--continue-on-check-fail", action="store_true",
+                    help="start the load tests even if a live check fails")
+    args = ap.parse_args(argv)
+
+    plan = Plan(**PROFILES[args.profile])
+    tag = args.tag or f"{args.profile}_{dt.datetime.now():%Y-%m-%d_%H%M}"
+    out = out_dir_for(tag)
+    out.mkdir(parents=True, exist_ok=True)
+    log = Log(out / "run_log.txt")
+    rows, total = estimate(plan)
+    done = sum(is_done(out, *c) for c in plan.cells())
+    write_meta(out, plan, tag=tag, profile=args.profile, started=dt.datetime.now().isoformat(timespec="seconds"))
+    log.say(f"run {tag} -> {out}")
+    log.say(f"{len(plan.cells())} load-test runs planned, {done} already done; estimate "
+            + ", ".join(f"{n} {fmt_hours(s)}" for n, s in rows) + f"; total {fmt_hours(total)} "
+            f"(done around {dt.datetime.now() + dt.timedelta(seconds=total):%a %H:%M})")
+
+    t0 = time.monotonic()
+    pre = preflight(out)
+    for name, ok, detail in pre:
+        log.say(f"preflight {'ok  ' if ok else 'FAIL'} {name}: {detail}")
+    write_meta(out, plan, phase_seconds={"preflight": round(time.monotonic() - t0)})
+    if not all(ok for _, ok, _ in pre):
+        log.say("preflight failed: fix the check(s) above before the long runs")
+        return 1
+
+    t0 = time.monotonic()
+    checks = run_live_checks(out, log) if plan.run_checks else {}
+    write_meta(out, plan, phase_seconds={"live_checks": round(time.monotonic() - t0)})
+    if checks and not all(v["pass"] for v in checks.values()) and not args.continue_on_check_fail:
+        log.say("a live check failed: not starting the load tests (--continue-on-check-fail to go on anyway)")
+        return 1
+
+    t0 = time.monotonic()
+    ran = run_load_tests(out, plan, log)
+    write_meta(out, plan, phase_seconds={"load_tests": round(time.monotonic() - t0)})
+    log.say(f"load tests finished: {ran} runs this session in {fmt_hours(time.monotonic() - t0)}")
+
+    t0 = time.monotonic()
+    run_staleness(out, plan, log)
+    write_meta(out, plan, phase_seconds={"staleness": round(time.monotonic() - t0)},
+               finished=dt.datetime.now().isoformat(timespec="seconds"))
+
+    res = analyse(out, plan)
+    write_figures(out, res)
+    verdict ={True: "yes", False: "NO", None: "not in this run"}
+    print("\nIntegrity:")
+    for name, ok, detail in res["integrity"]:
+        print(f"  {verdict[ok]:<15} {name}: {detail}")
+    print("\nExpectations (fixed before the run):")
+    for name, held, detail in res["expectations"]:
+        print(f"  {verdict[held]:<15} {name}: {detail}")
+    summary = signals_report.summarise(out)
+    if summary:
+        print("\n" + signals_report.to_markdown(summary))
+    if not res["staleness"].empty:
+        print("\nStaleness experiment (stale reads %):")
+        print(res["staleness"].pivot_table(index="config", columns="setup", values="stale_pct", sort=False).round(1))
+    write_meta(out, plan, analysed=dt.datetime.now().isoformat(timespec="seconds"))
+    print(f"\nResults, tables and figures: {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

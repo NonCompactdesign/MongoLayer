@@ -1,6 +1,0 @@
-config,trials,hits,misses,stale_rate,in_expected_settings
-static_fast,200,107,93,0.465,200
-static_moderate,200,200,0,0.0,200
-static_safe,200,200,0,0.0,200
-adaptive_hot,200,200,0,0.0,200
-adaptive_cold,60,40,20,0.3333333333333333,60

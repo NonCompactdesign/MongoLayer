@@ -9,22 +9,21 @@ Rationale note for the full argument.
 tick() is deliberately public and separate from run()'s threaded loop: it
 lets tests (and manual scripts) drive one evaluation pass directly, with a
 fake clock and no real sleeping, instead of needing a background thread.
-start()/stop() are what demo_app.py and the benchmark harness actually use.
+start()/stop() are what the dashboard engine and the benchmark harness actually use.
 
-With no extra arguments the loop runs the traffic rule alone, exactly as
-before. signals=SignalConfig() turns on the SAFE latency budget
-(adaptive_layer/rules.py); policies={collection: CollectionPolicy(...)} works
-with or without it; thresholds=SIGNALS_THRESHOLDS adds hysteresis. Every
-switch records the reason the rules gave.
+Each tick runs every rule (adaptive_layer/rules.py): the traffic rule with
+hysteresis (SIGNALS_THRESHOLDS), the SAFE latency budget (SignalConfig), and
+any per-collection policies={collection: CollectionPolicy(...)}. Every switch
+records the reason the rules gave.
 """
 
 import threading
 import time
 from dataclasses import dataclass
 
-from adaptive_layer.decision import DEFAULT_THRESHOLDS, Settings, Thresholds
+from adaptive_layer.decision import Settings, Thresholds
 from adaptive_layer.monitor import Stats
-from adaptive_layer.rules import NO_POLICY, CollectionPolicy, Decision, SignalConfig, apply_rules
+from adaptive_layer.rules import NO_POLICY, SIGNALS_THRESHOLDS, CollectionPolicy, Decision, SignalConfig, apply_rules
 
 
 @dataclass(frozen=True)
@@ -43,8 +42,8 @@ class SwitchEvent:
 class FeedbackLoop:
     def __init__(
         self, client, monitor, interval_seconds=30, cooldown_seconds=60, clock=time.time,
-        thresholds: Thresholds = DEFAULT_THRESHOLDS,
-        signals: SignalConfig | None = None,
+        thresholds: Thresholds = SIGNALS_THRESHOLDS,
+        signals: SignalConfig = SignalConfig(),
         policies: dict[str, CollectionPolicy] | None = None,
     ):
         self._client = client

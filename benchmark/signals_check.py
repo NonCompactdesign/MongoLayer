@@ -7,8 +7,8 @@ it expected, what happened, and PASS / FAIL. About 3 minutes in total.
                  per-key read-your-own-writes; other reads must stay local
   C3 policy      (#5) read-heavy traffic on a floor="SAFE" collection stays SAFE
   C4 budget      (#9) T1, 60% writes: SAFE p95 ~260 ms > 100 ms budget -> MODERATE, with that reason
-  C5 hysteresis  (#8) 60% writes -> SAFE, then 37.5% writes: with hysteresis it stays SAFE (> 0.35),
-                 the traffic rule alone drops to MODERATE (< 0.40)
+  C5 hysteresis  (#8) 60% writes -> SAFE, then 37.5% writes: it stays SAFE (> 0.35, the exit
+                 threshold), although 37.5% is below the 0.40 that enters SAFE
 
 Every scenario also checks that the switch carries a reason (#10). Short 6 s window, 1 s tick,
 3 s cooldown (the benchmark uses 15 / 5 / 10 s). Results go to results/signals_eval/checks.json.
@@ -27,11 +27,11 @@ import uuid
 from pathlib import Path
 
 from adaptive_layer.client import AdaptiveClient
-from adaptive_layer.decision import FAST_SETTINGS, SAFE_SETTINGS, Thresholds, settings_name
+from adaptive_layer.decision import FAST_SETTINGS, SAFE_SETTINGS, settings_name
 from adaptive_layer.feedback import FeedbackLoop
 from adaptive_layer.monitor import AccessPatternMonitor
-from adaptive_layer.rules import SIGNALS_THRESHOLDS, CollectionPolicy, SignalConfig
-from benchmark import cluster, netem, topology
+from adaptive_layer.rules import CollectionPolicy
+from testbed import cluster, netem, topology
 
 URI = "mongodb://mongo1:27017,mongo2:27018,mongo3:27019/?replicaSet=rs0"
 DB = "signals_check"
@@ -79,17 +79,14 @@ class Traffic:
             t.join(timeout=10)
 
 
-def make(coll, signals=True, read_own_writes=None, policies=None):
-    """A client + feedback loop. signals=True: hysteresis + latency budget (adaptive_signals);
-    signals=False: the traffic rule alone (adaptive)."""
+def make(coll, read_own_writes=None, policies=None):
+    """A client + feedback loop with all the rules (hysteresis, latency budget, policies)."""
     monitor = AccessPatternMonitor(window_seconds=WINDOW)
     client = AdaptiveClient(URI, DB, monitor=monitor, verbose=False, key_field="key",
                             read_own_writes_seconds=read_own_writes)
     client._db.drop_collection(coll)
     client._db[coll].create_index("key")
-    kwargs = dict(thresholds=SIGNALS_THRESHOLDS, signals=SignalConfig()) if signals else dict(thresholds=Thresholds())
-    loop = FeedbackLoop(client, monitor, interval_seconds=INTERVAL, cooldown_seconds=COOLDOWN,
-                        policies=policies, **kwargs)
+    loop = FeedbackLoop(client, monitor, interval_seconds=INTERVAL, cooldown_seconds=COOLDOWN, policies=policies)
     return client, loop
 
 
@@ -204,23 +201,18 @@ def c4_budget():
         "settings": name, "reason": why, "after_s": reached, "all_writes_p95_ms": p95}
 
 
-def _hysteresis_run(coll, signals):
-    with session(coll, 0.6, signals=signals) as s:
-        safe_after = wait_for(lambda: s.client.get_active_settings(coll) == SAFE_SETTINGS, 15)
-        s.traffic.share = 0.375  # between 0.35 (leave SAFE with hysteresis) and 0.40 (enter SAFE)
-        time.sleep(WINDOW + 3 * COOLDOWN + 3)  # old 60% traffic gone from the window, several ticks
-        st = s.loop._monitor.get_stats(coll)
-        return {"safe_after_s": safe_after, "settings_after_drop": s.name(), "write_share_after_drop": round(st.write_share, 3),
-                "reason": reason(s.loop, coll), "switches": len(s.loop.switch_log), "reasons_ok": every_switch_has_a_reason(s.loop)}
-
-
 def c5_hysteresis():
     netem.clear()  # equal distances, so SAFE is cheap and the budget stays out of it
-    plain = _hysteresis_run("c5_plain", signals=False)
-    hyst = _hysteresis_run("c5_hyst", signals=True)
-    ok = (plain["settings_after_drop"] == "MODERATE" and hyst["settings_after_drop"] == "SAFE"
-          and "hysteresis" in hyst["reason"] and plain["reasons_ok"] and hyst["reasons_ok"])
-    return ok, {"traffic_rule_only": plain, "with_hysteresis": hyst}
+    with session("c5", 0.6) as s:
+        safe_after = wait_for(lambda: s.client.get_active_settings("c5") == SAFE_SETTINGS, 15)
+        s.traffic.share = 0.375  # between 0.35 (leave SAFE with hysteresis) and 0.40 (enter SAFE)
+        time.sleep(WINDOW + 3 * COOLDOWN + 3)  # old 60% traffic gone from the window, several ticks
+        st = s.loop._monitor.get_stats("c5")
+        out = {"safe_after_s": safe_after, "settings_after_drop": s.name(), "write_share_after_drop": round(st.write_share, 3),
+               "reason": reason(s.loop, "c5"), "switches": len(s.loop.switch_log), "reasons_ok": every_switch_has_a_reason(s.loop)}
+    ok = (safe_after is not None and out["settings_after_drop"] == "SAFE" and "hysteresis" in out["reason"]
+          and out["reasons_ok"])
+    return ok, out
 
 
 SCENARIOS = {"C1": c1_distances, "C2": c2_own_writes, "C3": c3_policy, "C4": c4_budget, "C5": c5_hysteresis}
